@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: ness-dynamodb-local
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_REGION=us-east-1
+    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    networks:
+      - ness-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: ness-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - ness-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  app:
+    build: .
+    container_name: ness-app
+    ports:
+      - "8080:8080"
+    environment:
+      - LLM_PROVIDER=bedrock
+      - BEDROCK_MODEL_ID=amazon.titan-text-express-v1:0
+      - BEDROCK_EMBEDDINGS_MODEL_ID=amazon.titan-embed-text-v1
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
+      - DYNAMODB_TABLE_CANDIDATES=page_candidates
+      - DYNAMODB_TABLE_CACHE=response_cache
+      - S3_BUCKET_INDEX=ness-chatbot-index
+      - ADMIN_API_KEY=dev-secret-key-change-in-prod
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - ness-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  dynamodb-data:
+  minio-data:
+
+networks:
+  ness-network:
+    driver: bridge

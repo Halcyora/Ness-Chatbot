@@ -2,7 +2,7 @@
 
 ## 0. Answering your Q5: "Is RAG better?"
 Yes — for Ness specifically, **hybrid** is correct, not pure RAG:
-- **RAG** (embedded/indexed content) for stable info: services, about, industries, leadership, blog, case studies. Cheap (one-time embed + weekly refresh), fast, no live scrape per request.
+- **RAG** (embedded/indexed content) for stable info: services, about, industries, leadership, blog, case studies. Cheap (one-time embed + admin-triggered refresh, see §5c), fast, no live scrape per request.
 - **Live tool-calling** only for content that changes often or must be exact: open job listings, latest news/press releases, contact form status, pricing (if any). Calling live guarantees no stale/hallucinated data for these.
 - Pure RAG risks stale "latest news"/"open roles". Pure live-scraping-on-every-query is slow and burns cost on stable content. Hybrid = cheapest + most accurate.
 
@@ -34,8 +34,9 @@ flowchart TB
         CACHE[("Response Cache<br/>DynamoDB TTL")]
     end
 
-    subgraph DataIngestion["Ingestion (scheduled, offline)"]
+    subgraph DataIngestion["Ingestion (admin-triggered, offline)"]
         SCRAPER["Scraper<br/>requests + BeautifulSoup"]
+        CANDIDATES[("page_candidates<br/>DynamoDB")]
         CHUNK["Clean + Chunk"]
         EMBED["Embed"]
         INDEX[("Vector Index<br/>FAISS file on S3")]
@@ -43,7 +44,7 @@ flowchart TB
 
     SITE["ness.com"]
     PROVIDERS[["OpenAI mini/nano (default)<br/>or Local model (Ollama/vLLM) on company server"]]
-    CRON["EventBridge Cron (weekly)"]
+    ADMIN["Admin Console<br/>Refresh Pages / Embed Selected buttons"]
     TRACE[["LangSmith<br/>(cost/token tracing)"]]
 
     UI -->|message| GATEWAY --> ORCH --> GUARDIN --> CLASSIFY
@@ -59,7 +60,8 @@ flowchart TB
     LLMI -->|swap via config| PROVIDERS
     LLMI -.->|trace every call| TRACE
 
-    CRON --> SCRAPER --> CHUNK --> EMBED --> INDEX
+    ADMIN -->|Refresh Pages click| SCRAPER --> CANDIDATES
+    ADMIN -->|Embed Selected click, status=included only| CHUNK --> EMBED --> INDEX
 ```
 
 ---
@@ -82,7 +84,7 @@ flowchart TB
 {
   "site_id": "ness",
   "base_url": "https://www.ness.com",
-  "sitemap_seeds": ["/", "/careers", "/insights", "/about"],
+  "sitemap_seeds": ["/", "/about", "/services", "/industries", "/leadership", "/blog", "/case-studies"],
   "dynamic_pages": {
     "careers": { "url": "/careers", "selector": ".job-listing", "trigger_keywords": ["career", "careers", "job", "jobs", "hiring", "vacancy", "open position", "apply"] },
     "news": { "url": "/insights", "selector": ".article-card", "trigger_keywords": ["latest news", "press release", "announcement", "recent blog", "new article"] }
@@ -100,6 +102,12 @@ flowchart TB
 }
 ```
 Each `quick_action` is a direct route (`canned` / `rag` / `tool`) bound to a button — no free-text typing or intent classification needed for the common 80% of questions. Adding a new client site = add a new file here + run the ingestion job with that `site_id`. Orchestrator, RAG, tools, UI all read from this config — no hardcoded Ness logic in core code paths (only the config *values* are Ness-specific).
+
+**Dynamic pages are never embedded**: `sitemap_seeds` intentionally excludes any URL listed under `dynamic_pages` (careers, insights) — those are served exclusively via live tool-calling. As a safety net (in case a future edit re-adds an overlapping URL), the ingestion job should also filter defensively:
+```python
+dynamic_urls = {page["url"] for page in config["dynamic_pages"].values()}
+pages_to_embed = [url for url in sitemap_seeds if url not in dynamic_urls]
+```
 
 ---
 
@@ -140,12 +148,27 @@ Yes — and it's the correct packaging choice here, not just an option:
 
 ---
 
+## 5c. Admin Console (manual page selection + on-demand ingestion)
+Instead of a scheduled cron and blind embedding, ingestion is fully **admin-triggered** via two buttons in the admin console — no EventBridge, no idle scheduling cost, you decide exactly when a scrape or embed runs:
+1. **"Refresh Pages" button** → calls `POST /admin/refresh` → invokes `scraper.py` (discover phase): crawls `sitemap_seeds`, records each found page (`url`, `title`, `last_scraped`, `status`) into a DynamoDB table `page_candidates` — no chunking/embedding yet. New pages default to `status: pending` (excluded); pages already `included` get their `last_scraped` content refreshed in place.
+2. **Review & select** (human-in-the-loop): the admin page lists all `page_candidates` for the site with a checkbox per page. You check the ones you want embedded → `PUT /admin/pages/{id}` flips `status` to `included` (or `excluded`).
+3. **"Embed Selected" button** → calls `POST /admin/embed` → invokes `chunker.py` + `embedder.py` only on pages where `status = included`, rebuilding the FAISS index. Anything left `pending`/`excluded` is skipped — same guarantee as the `dynamic_pages` exclusion in §4, but now covers *any* page, not just the known careers/news ones.
+
+Why this is worth the added surface area given the cost-first goal:
+- **Safety by default**: newly discovered pages never get embedded automatically — nothing enters the FAISS index without your explicit click, so no accidental staleness or off-topic content sneaks into RAG.
+- **No idle scheduling cost**: removing EventBridge means zero cost/complexity for a cron that would otherwise run whether or not content actually changed. Trade-off: nothing reminds you to click "Refresh" periodically — staleness now depends on you remembering, acceptable at Ness's low change-frequency scale.
+- **Cheap to host**: the admin page is a static bundle on S3 + CloudFront (or skip CloudFront and serve from the same API Gateway/Lambda as a simple HTML route); it reuses the existing Lambda/API Gateway/DynamoDB infra — no new servers, just a few extra routes (`POST /admin/refresh`, `POST /admin/embed`, `GET/PUT /admin/pages`) and one small table.
+- **Auth kept minimal**: a single-user Cognito pool (or even a shared admin API key behind a Lambda authorizer) is enough — this isn't a multi-tenant admin system, just a gate for you.
+- **Modular**: `page_candidates` is keyed by `site_id`, so the same admin page works for any future client site with zero code changes — just a different `site_id` filter.
+
+---
+
 ## 6. Cost Optimization Checklist
 | Lever | Approach |
 |---|---|
 | Greetings/menu | Fully hardcoded, zero LLM/embedding cost |
 | Vector store | FAISS index file in S3, loaded into Lambda memory on cold start — no always-on DB bill (fits <1k conversations/month easily) |
-| Refresh cadence | Weekly EventBridge cron scrape, not real-time |
+| Refresh cadence | Admin-triggered ("Refresh Pages"/"Embed Selected" buttons), not real-time or auto-scheduled |
 | Repeat questions | DynamoDB response cache keyed by normalized-query hash + TTL |
 | Model tier | Smallest/cheapest hosted model by default; upgradeable per-query only if needed |
 | Compute | AWS Lambda (container image, pay-per-invoke) + API Gateway, no idle server |
@@ -153,6 +176,7 @@ Yes — and it's the correct packaging choice here, not just an option:
 | Abuse protection | API Gateway throttling + per-session daily message cap — stops bots from driving up LLM bills |
 | Guardrails | Rule-based (regex/prompt) not paid moderation API — see §5a |
 | Packaging | Single Docker image (container Lambda) shared by API + ingestion — one build/registry instead of two, small ECR storage cost only |
+| Page selection | Admin approves pages once via a static admin page + existing Lambda/DynamoDB — avoids embedding (and paying for) pages nobody wants — see §5c |
 
 ---
 
@@ -164,12 +188,13 @@ Yes — and it's the correct packaging choice here, not just an option:
 | Vector store | FAISS (via LangChain `FAISS` wrapper), index file in S3 | Free, in-memory, fits small Ness corpus |
 | LLM observability & cost tracking | **LangSmith** | Per-trace token/cost visibility, already integrates with LangChain calls |
 | Cache | DynamoDB (query-hash → answer, TTL) | Serverless, pay-per-use, avoids repeat LLM calls |
-| Infra-as-Code | **Terraform** | Deploys Lambda (container image), ECR, API Gateway, DynamoDB, S3, EventBridge |
+| Infra-as-Code | **Terraform** | Deploys Lambda (container image), ECR, API Gateway, DynamoDB, S3 |
 | Compute | AWS Lambda (container image, package_type=Image) + API Gateway | Pay-per-invoke, matches low-traffic scale, supports the larger LangChain/FAISS dependency footprint |
 | Packaging | **Docker** (single image, ECR) | Required due to dependency size; same image is portable to a company on-prem server later — see §5b |
 | CI/CD | GitHub Actions | Build + push image to ECR, then deploy |
 | Frontend widget | Existing open-source chat widget library (re-skinned to Ness branding) | Faster to ship than fully custom UI |
 | Abuse control | API Gateway usage plan (rate limit + daily cap per session/IP) | Cheapest guardrail against cost runaway |
+| Admin console | Static page (S3/CloudFront) + single-user Cognito auth + existing Lambda/DynamoDB | Gates which pages get embedded — no new servers, minimal auth surface — see §5c |
 
 ---
 
@@ -178,15 +203,16 @@ Yes — and it's the correct packaging choice here, not just an option:
 ness-chatbot/
 ├── config/
 │   └── sites/ness.json
-├── ingestion/              # offline batch job (Lambda + EventBridge, image CMD override)
-│   ├── scraper.py
+├── ingestion/              # offline batch job (Lambda, admin-triggered via API, image CMD override)
+│   ├── scraper.py          # discover phase: writes page_candidates, no embedding
 │   ├── chunker.py
-│   └── embedder.py
+│   └── embedder.py         # only processes pages with status=included
 ├── api/                    # Lambda handler (image CMD override)
 │   ├── orchestrator.py
 │   ├── intent_router.py
 │   ├── rag_retriever.py
 │   ├── guardrails.py
+│   ├── admin_pages.py      # GET/PUT page_candidates routes for the admin console
 │   ├── tools/
 │   │   ├── get_open_positions.py
 │   │   └── get_latest_news.py
@@ -199,9 +225,11 @@ ness-chatbot/
 │   ├── src/ChatWidget.tsx
 │   ├── standalone.html     # mounts widget full-page today
 │   └── embed.js            # <script> snippet to float it on any site later
+├── admin/                  # static admin console (page selection for embedding, §5c)
+│   └── src/PageSelector.tsx
 ├── Dockerfile              # single image, shared by api/ and ingestion/ (different CMD per Lambda)
 ├── docker-compose.yml      # local dev + future on-prem run
-└── infra/                  # Terraform for Lambda (image), ECR, API GW, S3, DynamoDB, EventBridge, usage-plan throttling
+└── infra/                 # Terraform for Lambda (image), ECR, API GW, S3, DynamoDB, usage-plan throttling
 ```
 
 ---

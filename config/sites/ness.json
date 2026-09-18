@@ -1,0 +1,105 @@
+{
+  "site_id": "ness",
+  "base_url": "https://www.ness.com",
+  "sitemap_seeds": [
+    "/",
+    "/about",
+    "/services",
+    "/industries",
+    "/leadership",
+    "/blog",
+    "/case-studies"
+  ],
+  "dynamic_pages": {
+    "careers": {
+      "url": "/careers",
+      "selector": ".job-listing, .career-card, [data-job-item]",
+      "trigger_keywords": [
+        "career",
+        "careers",
+        "job",
+        "jobs",
+        "hiring",
+        "vacancy",
+        "open position",
+        "apply",
+        "position",
+        "recruitment"
+      ]
+    },
+    "news": {
+      "url": "/insights",
+      "selector": ".article-card, .blog-post, [data-article-item]",
+      "trigger_keywords": [
+        "latest news",
+        "press release",
+        "announcement",
+        "recent blog",
+        "new article",
+        "news",
+        "article",
+        "blog",
+        "press"
+      ]
+    }
+  },
+  "greeting_keywords": [
+    "hi",
+    "hello",
+    "hey",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "greetings",
+    "howdy",
+    "welcome"
+  ],
+  "branding": {
+    "name": "Ness",
+    "primary_color": "#0066cc",
+    "secondary_color": "#004499",
+    "logo_url": "https://www.ness.com/logo.png",
+    "favicon_url": "https://www.ness.com/favicon.ico"
+  },
+  "welcome_message": "👋 Welcome to Ness! I'm here to help you learn more about our services, explore career opportunities, or answer any questions you might have.",
+  "quick_actions": [
+    {
+      "id": "services",
+      "label": "Our Services",
+      "icon": "🔧",
+      "route": "rag",
+      "query": "What services does Ness offer?"
+    },
+    {
+      "id": "careers",
+      "label": "Careers",
+      "icon": "💼",
+      "route": "tool",
+      "tool": "get_open_positions"
+    },
+    {
+      "id": "industries",
+      "label": "Industries",
+      "icon": "🏢",
+      "route": "rag",
+      "query": "What industries does Ness serve?"
+    },
+    {
+      "id": "about",
+      "label": "About Ness",
+      "icon": "ℹ️",
+      "route": "rag",
+      "query": "Tell me about Ness as a company"
+    },
+    {
+      "id": "contact",
+      "label": "Contact Us",
+      "icon": "📧",
+      "route": "canned",
+      "reply": "You can reach our team at contact@ness.com or visit https://www.ness.com/contact. How else can I help you?"
+    }
+  ],
+  "fallback_reply": "I'm not entirely sure about that. Here are some resources that might help:",
+  "offTopic_reply": "I'm specifically designed to help with questions about Ness. Please feel free to ask about our services, careers, or other Ness-related topics!",
+  "error_reply": "Sorry, I encountered an issue. Please try again or contact support@ness.com for assistance."
+}
