@@ -29,12 +29,13 @@ load_dotenv()
 
 # Configure LangSmith for observability (optional, via environment variables)
 # Set LANGSMITH_API_KEY and LANGSMITH_PROJECT to enable
+# LangChain/LangSmith read tracing config from env vars directly - no explicit configure() call needed
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "ness-chatbot")
 if LANGSMITH_API_KEY:
-    os.environ["LANGSMITH_TRACING_V2"] = "true"
-    import langsmith
-    langsmith.configure(api_key=LANGSMITH_API_KEY, project=LANGSMITH_PROJECT)
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = LANGSMITH_PROJECT
 
 
 def handle_message(site_id: str, message: str) -> Dict[str, Any]:

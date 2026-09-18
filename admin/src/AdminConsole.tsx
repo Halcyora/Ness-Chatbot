@@ -19,17 +19,20 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [pages, setPages] = useState<PageCandidate[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // apiKey is only set once the backend has confirmed it is valid
   const [apiKey, setApiKey] = useState('')
+  // keyInput tracks the (unvalidated) text typed into the login form
+  const [keyInput, setKeyInput] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [embeddingProgress, setEmbeddingProgress] = useState(0)
   const [selectedCount, setSelectedCount] = useState(0)
 
-  // Load API key from sessionStorage on mount
+  // Try any previously-saved API key on mount, but only accept it once validated
   useEffect(() => {
     const saved = sessionStorage.getItem('admin_api_key')
     if (saved) {
-      setApiKey(saved)
-      loadPages(saved)
+      setKeyInput(saved)
+      authenticate(saved)
     }
   }, [])
 
@@ -46,16 +49,49 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
 
   const handleApiKeySubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    sessionStorage.setItem('admin_api_key', apiKey)
-    loadPages(apiKey)
+    authenticate(keyInput)
   }
 
-  const loadPages = async (key: string) => {
+  // Validates the key against the backend; only grants access on success
+  const authenticate = async (key: string) => {
     if (!key) {
       setError('Please enter an API key')
       return
     }
 
+    setLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`${apiUrl}/admin/pages?site_id=${siteId}`, {
+        headers: { 'X-Admin-Key': key },
+      })
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Invalid API key. Check ADMIN_API_KEY in your backend .env file.')
+      }
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`)
+      }
+
+      const data = await response.json()
+      setPages(data.pages || [])
+      // Only now do we mark the session as authenticated
+      setApiKey(key)
+      sessionStorage.setItem('admin_api_key', key)
+    } catch (err) {
+      sessionStorage.removeItem('admin_api_key')
+      setError(
+        err instanceof Error
+          ? err.message
+          : `Failed to reach API at ${apiUrl}. Is the backend running?`
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadPages = async (key: string) => {
     setLoading(true)
     setError(null)
 
@@ -173,8 +209,8 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
                   <input
                     id="apiKey"
                     type={showApiKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    value={keyInput}
+                    onChange={(e) => setKeyInput(e.target.value)}
                     placeholder="Enter your admin API key"
                     required
                   />
@@ -221,6 +257,7 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
           className="logout-btn"
           onClick={() => {
             setApiKey('')
+            setKeyInput('')
             sessionStorage.removeItem('admin_api_key')
           }}
         >

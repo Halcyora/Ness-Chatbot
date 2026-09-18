@@ -12,7 +12,7 @@ from datetime import datetime
 
 import boto3
 import numpy as np
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EndpointConnectionError
 from dotenv import load_dotenv
 
 from api.llm import get_llm_provider
@@ -84,6 +84,12 @@ class RAGRetriever:
 
         except ImportError:
             print("FAISS not available - RAG retrieval disabled")
+            self.index = None
+            self.metadata = None
+            self.chunks = None
+        except EndpointConnectionError:
+            # MinIO/S3 not reachable (e.g. local infra not started) - degrade gracefully
+            print("S3/MinIO endpoint unreachable - RAG retrieval disabled")
             self.index = None
             self.metadata = None
             self.chunks = None
