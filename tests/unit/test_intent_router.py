@@ -85,7 +85,8 @@ class TestRouteMessage:
         }
         routing = route_message("Are you hiring?", classification, ness_config)
         assert routing["handler"] == "tool"
-        assert routing["tool_name"] == "get_careers"
+        # "careers" category maps to the actual registered tool, get_open_positions
+        assert routing["tool_name"] == "get_open_positions"
         assert "tool_config" in routing
 
     def test_route_stable(self, ness_config):

@@ -60,7 +60,9 @@ class RAGRetriever:
             try:
                 response = s3.get_object(Bucket=S3_BUCKET, Key=index_key)
                 index_bytes = response["Body"].read()
-                self.index = faiss.deserialize_index(index_bytes)
+                # deserialize_index expects a numpy uint8 array, not raw bytes
+                index_array = np.frombuffer(index_bytes, dtype=np.uint8)
+                self.index = faiss.deserialize_index(index_array)
             except ClientError as e:
                 if e.response["Error"]["Code"] == "NoSuchKey":
                     # Index doesn't exist yet

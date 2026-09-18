@@ -39,6 +39,10 @@ REQUEST_HEADERS = {
 # not real content - seen on sites fronted by bot-protection (e.g. sgcaptcha, Cloudflare)
 _CHALLENGE_MARKERS = ("sgcaptcha", "captcha", "cf-challenge", "checking your browser")
 
+# Fallback to a real headless browser when plain requests gets blocked/JS-rendered content
+USE_PLAYWRIGHT_FALLBACK = os.getenv("SCRAPER_USE_PLAYWRIGHT_FALLBACK", "true").lower() == "true"
+PLAYWRIGHT_TIMEOUT_MS = 20000
+
 
 def _get_session() -> requests.Session:
     """Shared session so cookies persist across requests to the same site."""
@@ -141,6 +145,59 @@ def get_page_urls(base_url: str, html: str) -> List[str]:
     return list(set(urls))  # Remove duplicates
 
 
+def fetch_page_with_playwright(url: str) -> Optional[Dict[str, str]]:
+    """
+    Fetch a page using a real headless browser (Playwright/Chromium).
+
+    Used as a fallback when plain requests hits a challenge page or JS-only
+    content. Not a bypass for IP-level bot blocks - only helps for genuinely
+    JS-rendered pages or lightweight browser-fingerprint checks.
+
+    Runs in a dedicated worker thread because Playwright's Sync API refuses
+    to run on a thread that already has an asyncio event loop (e.g. FastAPI's
+    request-handling thread).
+    """
+    try:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(_fetch_with_playwright_sync, url).result()
+    except Exception as e:
+        print(f"  \u26a0\ufe0f  Playwright fetch failed for {url}: {e}")
+        return None
+
+
+def _fetch_with_playwright_sync(url: str) -> Optional[Dict[str, str]]:
+    """Actual Playwright Sync API call - must run on a thread with no asyncio event loop."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  \u26a0\ufe0f  Playwright not installed - skipping browser fallback")
+        return None
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=REQUEST_HEADERS["User-Agent"])
+            page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            html = page.content()
+            browser.close()
+
+        if is_challenge_page(html):
+            print(f"  \U0001F6AB Still blocked after browser render: {url}")
+            return None
+
+        return {
+            "title": extract_title(html),
+            "content": extract_text(html),
+            "html": html,
+        }
+    except Exception as e:
+        print(f"  \u26a0\ufe0f  Playwright fetch failed for {url}: {e}")
+        return None
+
+
 def fetch_page(url: str, session: Optional[requests.Session] = None) -> Optional[Dict[str, str]]:
     """Fetch a page and extract title and content."""
     try:
@@ -154,6 +211,9 @@ def fetch_page(url: str, session: Optional[requests.Session] = None) -> Optional
 
         if is_challenge_page(response.text):
             print(f"  \U0001F6AB Blocked by anti-bot/CAPTCHA challenge: {url}")
+            if USE_PLAYWRIGHT_FALLBACK:
+                print("  \U0001F504 Retrying with headless browser (Playwright)...")
+                return fetch_page_with_playwright(url)
             return None
 
         title = extract_title(response.text)
@@ -166,6 +226,9 @@ def fetch_page(url: str, session: Optional[requests.Session] = None) -> Optional
         }
     except requests.RequestException as e:
         print(f"  ⚠️  Failed to fetch {url}: {e}")
+        if USE_PLAYWRIGHT_FALLBACK:
+            print("  \U0001F504 Retrying with headless browser (Playwright)...")
+            return fetch_page_with_playwright(url)
         return None
 
 

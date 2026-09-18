@@ -129,6 +129,10 @@ def embed_and_index(site_id: str) -> None:
     chunks = chunk_documents(pages, CHUNK_SIZE, CHUNK_OVERLAP)
     print(f"   Created {len(chunks)} chunks from {len(pages)} pages")
 
+    if not chunks:
+        print("   ⚠️  No chunks produced (pages have no content) - skipping embedding")
+        return
+
     # Create embeddings (optional - mock if LLM unavailable)
     print("\n3️⃣  Generating embeddings...")
 
@@ -190,7 +194,8 @@ def embed_and_index(site_id: str) -> None:
 
         # Upload FAISS index
         index_key = f"{site_id}/index.faiss"
-        index_bytes = faiss.serialize_index(index)
+        # faiss.serialize_index returns a numpy uint8 array in this version - S3 needs raw bytes
+        index_bytes = faiss.serialize_index(index).tobytes()
         s3_client.put_object(
             Bucket=S3_BUCKET,
             Key=index_key,

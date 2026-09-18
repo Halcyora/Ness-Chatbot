@@ -90,9 +90,14 @@ def route_message(
 
     elif msg_type == "dynamic":
         category = classification.get("category")
+        # Maps a dynamic_pages category (from site config) to its registered tool name
+        category_to_tool = {
+            "careers": "get_open_positions",
+            "news": "get_latest_news",
+        }
         return {
             "handler": "tool",
-            "tool_name": f"get_{category}",  # e.g., get_careers, get_news
+            "tool_name": category_to_tool.get(category, f"get_{category}"),
             "tool_config": {
                 "url": classification.get("url", ""),
                 "selector": classification.get("selector", ""),

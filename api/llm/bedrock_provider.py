@@ -18,7 +18,7 @@ class BedrockProvider(LLMProvider):
     AWS Bedrock LLM provider using Titan models.
 
     Configuration via environment variables:
-    - BEDROCK_MODEL_ID: Model ID for text generation (default: amazon.titan-text-express-v1:0)
+    - BEDROCK_MODEL_ID: Model ID for text generation (default: amazon.nova-micro-v1:0)
     - BEDROCK_EMBEDDINGS_MODEL_ID: Model ID for embeddings (default: amazon.titan-embed-text-v1)
     - AWS_REGION: AWS region (default: us-east-1)
     - AWS_ACCESS_KEY_ID: AWS access key (optional, uses default credentials if not set)
@@ -29,7 +29,7 @@ class BedrockProvider(LLMProvider):
         """Initialize Bedrock client and model IDs from environment."""
         self.model_id = os.getenv(
             "BEDROCK_MODEL_ID",
-            "amazon.titan-text-express-v1:0"
+            "amazon.nova-micro-v1:0"
         )
         self.embeddings_model_id = os.getenv(
             "BEDROCK_EMBEDDINGS_MODEL_ID",
@@ -55,16 +55,10 @@ class BedrockProvider(LLMProvider):
         """Test that we can connect to Bedrock."""
         try:
             # Try a minimal invoke to verify credentials and connectivity
-            self.client.invoke_model(
+            self.client.converse(
                 modelId=self.model_id,
-                body=json.dumps({
-                    "inputText": "test",
-                    "textGenerationConfig": {
-                        "maxTokenCount": 10,
-                        "temperature": 0.0
-                    }
-                }),
-                contentType="application/json"
+                messages=[{"role": "user", "content": [{"text": "test"}]}],
+                inferenceConfig={"maxTokens": 10, "temperature": 0.0},
             )
         except ClientError as e:
             if e.response["Error"]["Code"] == "AccessDenied":
@@ -82,7 +76,7 @@ class BedrockProvider(LLMProvider):
         max_tokens: int = 1024,
     ) -> str:
         """
-        Generate text using AWS Bedrock Titan model.
+        Generate text using AWS Bedrock (Converse API - works across model families).
 
         Note: Tool-calling support would require additional LLM setup.
         For now, tools parameter is accepted but not used (future enhancement).
@@ -97,25 +91,16 @@ class BedrockProvider(LLMProvider):
             Generated text response
         """
         try:
-            response = self.client.invoke_model(
+            response = self.client.converse(
                 modelId=self.model_id,
-                body=json.dumps({
-                    "inputText": prompt,
-                    "textGenerationConfig": {
-                        "maxTokenCount": max_tokens,
-                        "temperature": temperature,
-                        "topP": 0.9,
-                    }
-                }),
-                contentType="application/json",
-                accept="application/json"
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={
+                    "maxTokens": max_tokens,
+                    "temperature": temperature,
+                    "topP": 0.9,
+                },
             )
-
-            response_body = json.loads(response["body"].read())
-            # Titan returns results in the format: {"results": [{"outputText": "..."}]}
-            if "results" in response_body and response_body["results"]:
-                return response_body["results"][0].get("outputText", "").strip()
-            return ""
+            return response["output"]["message"]["content"][0]["text"].strip()
 
         except ClientError as e:
             raise RuntimeError(f"Bedrock API error: {e}")
