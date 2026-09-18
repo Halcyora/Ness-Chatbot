@@ -37,7 +37,11 @@ REQUEST_HEADERS = {
 
 # Markers that indicate the response is an anti-bot/CAPTCHA challenge page,
 # not real content - seen on sites fronted by bot-protection (e.g. sgcaptcha, Cloudflare)
-_CHALLENGE_MARKERS = ("sgcaptcha", "captcha", "cf-challenge", "checking your browser")
+_CHALLENGE_MARKERS = (
+    "sgcaptcha", "captcha", "cf-challenge", "checking your browser",
+    "403 - forbidden", "403 forbidden", "access to this page is forbidden",
+    "404 - not found", "404 not found", "access denied",
+)
 
 # Fallback to a real headless browser when plain requests gets blocked/JS-rendered content
 USE_PLAYWRIGHT_FALLBACK = os.getenv("SCRAPER_USE_PLAYWRIGHT_FALLBACK", "true").lower() == "true"
@@ -179,10 +183,15 @@ def _fetch_with_playwright_sync(url: str) -> Optional[Dict[str, str]]:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(user_agent=REQUEST_HEADERS["User-Agent"])
-            page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
+            response = page.goto(url, timeout=PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
             html = page.content()
+            status = response.status if response else None
             browser.close()
+
+        if status is not None and status >= 400:
+            print(f"  \U0001F6AB Browser render got HTTP {status} (error page): {url}")
+            return None
 
         if is_challenge_page(html):
             print(f"  \U0001F6AB Still blocked after browser render: {url}")

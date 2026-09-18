@@ -125,13 +125,14 @@ class RAGRetriever:
             query_embedding = self.llm_provider.embed([query])[0]
             query_vector = np.array([query_embedding]).astype("float32")
 
-            # Search FAISS index
-            # Note: FAISS returns distances (L2), not similarities
-            # We convert: similarity = 1 / (1 + distance)
-            distances, indices = self.index.search(query_vector, top_k)
+            # L2-normalize to match the normalized vectors stored in the index (see embedder.py)
+            norm = np.linalg.norm(query_vector, axis=1, keepdims=True)
+            norm[norm == 0] = 1e-10
+            query_vector = query_vector / norm
 
-            # Convert distances to similarities (0-1 range)
-            similarities = 1.0 / (1.0 + distances[0])
+            # Search FAISS index (IndexFlatIP on normalized vectors returns cosine similarity directly)
+            similarities, indices = self.index.search(query_vector, top_k)
+            similarities = similarities[0]
 
             # Filter by minimum score
             results = []

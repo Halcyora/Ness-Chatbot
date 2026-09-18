@@ -172,9 +172,15 @@ def embed_and_index(site_id: str) -> None:
         embeddings_array = np.array(embeddings).astype("float32")
         print(f"   Embeddings shape: {embeddings_array.shape}")
 
-        # Create FAISS index
+        # L2-normalize so inner product == cosine similarity (0.75 threshold assumes cosine similarity,
+        # not raw L2 distance which is unbounded and makes any fixed threshold meaningless)
+        norms = np.linalg.norm(embeddings_array, axis=1, keepdims=True)
+        norms[norms == 0] = 1e-10
+        embeddings_array = embeddings_array / norms
+
+        # Create FAISS index (inner product on normalized vectors = cosine similarity)
         dimension = embeddings_array.shape[1]
-        index = faiss.IndexFlatL2(dimension)
+        index = faiss.IndexFlatIP(dimension)
         index.add(embeddings_array)
 
         print(f"   ✅ FAISS index created with {index.ntotal} vectors")
