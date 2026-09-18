@@ -71,13 +71,14 @@ def create_response_cache_table():
                 {"AttributeName": "query_hash", "AttributeType": "S"},
             ],
             BillingMode="PAY_PER_REQUEST",
-            TimeToLiveSpecification={
-                "AttributeName": "ttl",
-                "Enabled": True,
-            },
         )
         print(f"✅ Created table: {table_cache}")
         table.wait_until_exists()
+        # TTL must be enabled via a separate call - not a valid create_table parameter
+        dynamodb.meta.client.update_time_to_live(
+            TableName=table_cache,
+            TimeToLiveSpecification={"AttributeName": "ttl", "Enabled": True},
+        )
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceInUseException":
             print(f"ℹ️  Table already exists: {table_cache}")

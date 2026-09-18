@@ -29,8 +29,33 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # Request settings
 REQUEST_TIMEOUT = 10
 REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Ness Chatbot scraper; +https://www.ness.com)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+
+# Markers that indicate the response is an anti-bot/CAPTCHA challenge page,
+# not real content - seen on sites fronted by bot-protection (e.g. sgcaptcha, Cloudflare)
+_CHALLENGE_MARKERS = ("sgcaptcha", "captcha", "cf-challenge", "checking your browser")
+
+
+def _get_session() -> requests.Session:
+    """Shared session so cookies persist across requests to the same site."""
+    session = requests.Session()
+    session.headers.update(REQUEST_HEADERS)
+    return session
+
+
+def is_challenge_page(html: str) -> bool:
+    """Detect anti-bot/CAPTCHA challenge pages so we don't index them as real content."""
+    lower = html.lower()
+    if any(marker in lower for marker in _CHALLENGE_MARKERS):
+        return True
+    # Real pages have far more markup than a bare challenge stub
+    if len(html.strip()) < 500 and "<title>" not in lower:
+        return True
+    return False
 
 
 def get_dynamodb_table():
@@ -116,15 +141,20 @@ def get_page_urls(base_url: str, html: str) -> List[str]:
     return list(set(urls))  # Remove duplicates
 
 
-def fetch_page(url: str) -> Optional[Dict[str, str]]:
+def fetch_page(url: str, session: Optional[requests.Session] = None) -> Optional[Dict[str, str]]:
     """Fetch a page and extract title and content."""
     try:
-        response = requests.get(
+        http = session or requests
+        response = http.get(
             url,
             timeout=REQUEST_TIMEOUT,
-            headers=REQUEST_HEADERS,
+            headers=REQUEST_HEADERS if session is None else None,
         )
         response.raise_for_status()
+
+        if is_challenge_page(response.text):
+            print(f"  \U0001F6AB Blocked by anti-bot/CAPTCHA challenge: {url}")
+            return None
 
         title = extract_title(response.text)
         content = extract_text(response.text)
@@ -132,6 +162,7 @@ def fetch_page(url: str) -> Optional[Dict[str, str]]:
         return {
             "title": title,
             "content": content,
+            "html": response.text,
         }
     except requests.RequestException as e:
         print(f"  ⚠️  Failed to fetch {url}: {e}")
@@ -209,6 +240,7 @@ def discover_pages(site_id: str) -> List[Dict[str, Any]]:
     table = get_dynamodb_table()
     discovered = []
     visited = set()
+    session = _get_session()
 
     # BFS crawl from seed URLs
     to_visit = filtered_seeds.copy()
@@ -225,7 +257,7 @@ def discover_pages(site_id: str) -> List[Dict[str, Any]]:
         print(f"\n📄 Fetching: {url}")
 
         # Fetch page
-        page_data = fetch_page(url)
+        page_data = fetch_page(url, session=session)
         if not page_data:
             continue
 
@@ -245,8 +277,8 @@ def discover_pages(site_id: str) -> List[Dict[str, Any]]:
             print(f"   ❌ Error storing page: {e}")
             continue
 
-        # Extract links for further crawling (BFS)
-        new_urls = get_page_urls(base_url, requests.get(url, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS).text)
+        # Extract links for further crawling (BFS) - reuse the HTML already fetched
+        new_urls = get_page_urls(base_url, page_data["html"])
         for new_url in new_urls:
             if new_url not in visited and len(discovered) < max_pages:
                 to_visit.append(new_url)

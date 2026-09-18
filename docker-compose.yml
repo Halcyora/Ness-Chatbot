@@ -8,13 +8,14 @@ services:
       - "8000:8000"
     environment:
       - AWS_REGION=us-east-1
-    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data
-    volumes:
-      - dynamodb-data:/home/dynamodblocal/data
+    # -inMemory avoids a known Docker Desktop/Windows volume permission issue
+    # where the SQLite data file can't be opened, causing the container to crash-loop
+    command: -jar DynamoDBLocal.jar -sharedDb -inMemory
     networks:
       - ness-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      # DynamoDB Local returns HTTP 400 on GET / (no -f, since that's a valid "it's up" response)
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000/ || exit 1"]
       interval: 5s
       timeout: 2s
       retries: 5
@@ -71,7 +72,6 @@ services:
       retries: 3
 
 volumes:
-  dynamodb-data:
   minio-data:
 
 networks:
