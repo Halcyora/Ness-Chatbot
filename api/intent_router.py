@@ -8,8 +8,15 @@ Classifies messages into:
 - off_topic: Messages unrelated to Ness
 """
 
+import re
 from typing import Dict, Any, Literal
 from api.config_loader import load_site_config
+
+
+def _keyword_matches(keyword: str, message_lower: str) -> bool:
+    """Match keyword as whole word(s) (allowing a trailing plural 's'), not as a substring of another word."""
+    pattern = r"(?<!\w)" + re.escape(keyword.lower()) + r"s?(?!\w)"
+    return re.search(pattern, message_lower) is not None
 
 
 def classify(message: str, site_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,7 +44,7 @@ def classify(message: str, site_config: Dict[str, Any]) -> Dict[str, Any]:
     # Step 1: Check greeting keywords
     greeting_keywords = site_config.get("greeting_keywords", [])
     for keyword in greeting_keywords:
-        if keyword.lower() in message_lower:
+        if _keyword_matches(keyword, message_lower):
             return {"type": "greeting"}
 
     # Step 2: Check dynamic page trigger keywords
@@ -45,7 +52,7 @@ def classify(message: str, site_config: Dict[str, Any]) -> Dict[str, Any]:
     for category, page_config in dynamic_pages.items():
         trigger_keywords = page_config.get("trigger_keywords", [])
         for keyword in trigger_keywords:
-            if keyword.lower() in message_lower:
+            if _keyword_matches(keyword, message_lower):
                 return {
                     "type": "dynamic",
                     "category": category,

@@ -104,8 +104,11 @@ The API will be available at `http://localhost:8080`.
 ### 5. Run Tests
 
 ```bash
-# Unit tests (minimal, verifying core logic)
-pytest tests/ -v
+# Full unit + integration test suite
+python -m pytest tests/ -v
+
+# Skip tests that require local MinIO/DynamoDB (docker compose up -d)
+python -m pytest tests/ -v -k "not rag_retriever"
 ```
 
 ## Folder Structure
@@ -165,20 +168,20 @@ ness-chatbot/
 
 | Phase | Status | Goal |
 |-------|--------|------|
-| 0 | ✅ In Progress | Base folder structure, dependencies |
-| 1 | ⏳ Next | Site config + config loader |
-| 2 | ⏳ Next | LLM provider abstraction (Bedrock) |
-| 3 | ⏳ Next | Local AWS infra (docker-compose) |
-| 4 | ⏳ Next | Ingestion: scraper |
-| 5 | ⏳ Next | Ingestion: chunker + embedder |
-| 6 | ⏳ Next | Admin console API |
-| 7 | ⏳ Next | Guardrails (input/output) |
-| 8 | ⏳ Next | Intent router |
-| 9 | ⏳ Next | RAG retriever + tool-calling |
-| 10 | ⏳ Next | Orchestrator + cache + FastAPI |
-| 11 | ⏳ Next | Widget (React chat UI) |
-| 12 | ⏳ Next | Admin console (React UI) |
-| 13 | ⏳ Next | Dockerfile (single image, two entrypoints) |
+| 0 | ✅ Done | Base folder structure, dependencies |
+| 1 | ✅ Done | Site config + config loader |
+| 2 | ✅ Done | LLM provider abstraction (Bedrock) |
+| 3 | ✅ Done | Local AWS infra (docker-compose) |
+| 4 | ✅ Done | Ingestion: scraper |
+| 5 | ✅ Done | Ingestion: chunker + embedder |
+| 6 | ✅ Done | Admin console API |
+| 7 | ✅ Done | Guardrails (input/output) |
+| 8 | ✅ Done | Intent router |
+| 9 | ✅ Done | RAG retriever + tool-calling |
+| 10 | ✅ Done | Orchestrator + cache + FastAPI |
+| 11 | ✅ Done | Widget (React chat UI) |
+| 12 | ✅ Done | Admin console (React UI) |
+| 13 | ✅ Done | Dockerfile (single image, two entrypoints) |
 
 ## Key Design Decisions
 
@@ -188,16 +191,18 @@ ness-chatbot/
 - **Modular by site config**: swap to any new website via `config/sites/{site_id}.json`, zero core code changes
 - **Serverless (future)**: AWS Lambda container image + API Gateway + DynamoDB, ready to scale
 
-## Next Steps (Phase 1)
+## Frontend Build
 
 ```bash
-# Phase 1: Site Config
-# - Create config/sites/ness.json (service offerings, dynamic pages, branding, quick actions)
-# - Create api/config_loader.py with site config loader
+# Widget (embeddable chat)
+cd widget && npm install && npm run build
+
+# Admin console (page selection + embedding)
+cd admin && npm install && npm run build
 ```
 
 See [prompt_plan.md](prompt_plan.md) for the full phase-by-phase breakdown.
 
 ---
 
-**Status**: Phase 0 complete. Ready for Phase 1.
+**Status**: All 13 phases complete. Implementation verified via `pytest tests/`.
