@@ -83,9 +83,11 @@ def handle_message(site_id: str, message: str, session_id: str = "") -> Dict[str
             "trace": {"handler": "blocked", "reason": "input_guardrail"},
         }
 
-    # Step 2: Check cache (skipped mid-conversation so contextual follow-ups aren't
-    # answered with a stale reply cached under the same literal text)
-    cached_reply = get_cached(message) if not history else None
+    # Step 2: Check cache
+    # Note: Caching works for all message types. If a user asks the same question
+    # multiple times (even in the same session), they should get the cached answer.
+    # Contextual follow-ups are handled through conversation history anyway.
+    cached_reply = get_cached(message)
     if cached_reply:
         return {
             "reply": cached_reply,
@@ -96,7 +98,7 @@ def handle_message(site_id: str, message: str, session_id: str = "") -> Dict[str
 
     # Step 3: Intent classification
     classification = classify(message, config)
-    route = route_message(message, classification, config)
+    route = route_message(message, classification, config, history=history)
 
     # Step 4: Route to handler
     handler_type = route.get("handler")
@@ -217,9 +219,8 @@ Answer:"""
     if not answer:
         answer = config.get("error_reply", "Unable to process your request.")
 
-    # Step 5: Cache the answer (skipped mid-conversation, see step 2)
-    if not history:
-        set_cached(message, answer)
+    # Step 5: Cache the answer
+    set_cached(message, answer)
 
     # Step 6: Persist this turn so follow-up questions have context
     if session_id:

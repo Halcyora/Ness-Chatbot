@@ -9,7 +9,7 @@ Classifies messages into:
 """
 
 import re
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, List
 from api.config_loader import load_site_config
 
 
@@ -64,23 +64,68 @@ def classify(message: str, site_config: Dict[str, Any]) -> Dict[str, Any]:
     return {"type": "stable"}
 
 
+def _is_follow_up_refinement(message: str) -> bool:
+    """
+    Detect if a message is a contextual follow-up/refinement of previous results.
+    
+    Examples of follow-ups:
+    - "Tell me more about the first one"
+    - "Only show me the flash macro news"
+    - "What about that?"
+    - "Which one is the best?"
+    
+    These should use RAG with conversation history rather than re-running the tool.
+    """
+    message_lower = message.lower()
+    
+    # Refinement patterns that indicate context-dependent questions
+    followup_patterns = [
+        r"\b(more|tell|show|which|about|that|one|ones|first|second|last|these|those|this|it|them)\b",
+        r"\bonly\b",
+        r"\bfilter|narrow|specific\b",
+        r"\bdetail|explain|describe\b",
+        r"\bwhat about",
+        r"\bfocus on",
+    ]
+    
+    for pattern in followup_patterns:
+        if re.search(pattern, message_lower):
+            return True
+    
+    return False
+
+
 def route_message(
     message: str,
     classification: Dict[str, Any],
     site_config: Dict[str, Any],
+    history: List[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Route a message to the appropriate handler based on classification.
+
+    Special handling: If a message is a contextual follow-up (e.g., "tell me more
+    about the first one", "only show flash macro news"), route to RAG instead of
+    re-running the tool. RAG will use conversation history for context.
 
     Args:
         message: Original user message
         classification: Classification result from classify()
         site_config: Site configuration
+        history: Conversation history (to detect if this is truly a follow-up)
 
     Returns:
         Routing instruction with handler and parameters
     """
     msg_type = classification.get("type", "stable")
+    
+    # If this is classified as dynamic but looks like a contextual follow-up
+    # (with conversation history), route to RAG instead so it can use context
+    if msg_type == "dynamic" and history and _is_follow_up_refinement(message):
+        return {
+            "handler": "rag",
+            "query": message,
+        }
 
     if msg_type == "greeting":
         return {
@@ -132,7 +177,7 @@ if __name__ == "__main__":
 
     for msg in test_messages:
         classification = classify(msg, config)
-        routing = route_message(msg, classification, config)
+        routing = route_message(msg, classification, config, history=None)
         print(f"Message: {msg}")
         print(f"  Classification: {classification}")
         print(f"  Routing: {routing['handler']}")
