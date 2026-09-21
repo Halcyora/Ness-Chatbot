@@ -100,7 +100,7 @@ class RAGRetriever:
         self,
         query: str,
         top_k: int = 4,
-        min_score: float = 0.75,
+        min_score: float = 0.5,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Retrieve top-k similar chunks for a query.
@@ -155,68 +155,106 @@ class RAGRetriever:
 
 
 # Tool-calling implementations
-def get_open_positions(site_id: str = "ness") -> List[Dict[str, Any]]:
+def get_open_positions(site_id: str = "kkr") -> List[Dict[str, Any]]:
     """
-    Fetch open positions from Ness careers page (mock implementation).
+    Fetch open positions from careers page (mock implementation).
 
-    In production, this would scrape ness.com/careers dynamically.
+    In production, this would scrape dynamically from the site.
 
     Args:
-        site_id: The site identifier
+        site_id: The site identifier (kkr, ness, etc.)
 
     Returns:
         List of job listings
     """
-    # Mock data - in production, would fetch via requests + BeautifulSoup
-    return [
-        {
-            "title": "Senior Software Engineer",
-            "location": "Remote",
-            "department": "Engineering",
-            "url": "https://www.ness.com/careers/senior-engineer",
-        },
-        {
-            "title": "Solutions Architect",
-            "location": "New York, NY",
-            "department": "Services",
-            "url": "https://www.ness.com/careers/architect",
-        },
-        {
-            "title": "Product Manager",
-            "location": "San Francisco, CA",
-            "department": "Product",
-            "url": "https://www.ness.com/careers/product-manager",
-        },
-    ]
+    # Mock data - return site-specific jobs
+    if site_id == "kkr":
+        return [
+            {
+                "title": "Investment Associate",
+                "location": "New York, NY",
+                "department": "Private Equity",
+                "url": "https://www.kkr.com/careers/investment-associate",
+            },
+            {
+                "title": "Software Engineer",
+                "location": "San Francisco, CA",
+                "department": "Technology",
+                "url": "https://www.kkr.com/careers/software-engineer",
+            },
+            {
+                "title": "Analyst",
+                "location": "London, UK",
+                "department": "Credit",
+                "url": "https://www.kkr.com/careers/analyst",
+            },
+        ]
+    else:  # Default to ness or other sites
+        return [
+            {
+                "title": "Senior Software Engineer",
+                "location": "Remote",
+                "department": "Engineering",
+                "url": "https://www.ness.com/careers/senior-engineer",
+            },
+            {
+                "title": "Solutions Architect",
+                "location": "New York, NY",
+                "department": "Services",
+                "url": "https://www.ness.com/careers/architect",
+            },
+            {
+                "title": "Product Manager",
+                "location": "San Francisco, CA",
+                "department": "Product",
+                "url": "https://www.ness.com/careers/product-manager",
+            },
+        ]
 
 
-def get_latest_news(site_id: str = "ness") -> List[Dict[str, Any]]:
+def get_latest_news(site_id: str = "kkr") -> List[Dict[str, Any]]:
     """
-    Fetch latest news/articles from Ness insights page (mock implementation).
+    Fetch latest news/articles from insights page (mock implementation).
 
-    In production, this would scrape ness.com/insights dynamically.
+    In production, this would scrape dynamically from the site.
 
     Args:
-        site_id: The site identifier
+        site_id: The site identifier (kkr, ness, etc.)
 
     Returns:
         List of news articles
     """
-    # Mock data - in production, would fetch via requests + BeautifulSoup
-    return [
-        {
-            "title": "Digital Transformation Trends 2024",
-            "date": "2024-09-15",
-            "excerpt": "Exploring the latest trends in digital transformation...",
-            "url": "https://www.ness.com/insights/digital-transformation-2024",
-        },
-        {
-            "title": "Cloud Migration Best Practices",
-            "date": "2024-09-10",
-            "excerpt": "Key strategies for successful cloud migration projects...",
-            "url": "https://www.ness.com/insights/cloud-migration-best-practices",
-        },
-    ]
+    # Mock data - return site-specific insights
+    if site_id == "kkr":
+        return [
+            {
+                "title": "The Future of Private Markets",
+                "date": "2024-09-18",
+                "excerpt": "Exploring emerging opportunities in private equity and credit markets...",
+                "url": "https://www.kkr.com/insights/future-private-markets",
+            },
+            {
+                "title": "ESG and Value Creation",
+                "date": "2024-09-15",
+                "excerpt": "How ESG considerations drive sustainable returns in portfolio companies...",
+                "url": "https://www.kkr.com/insights/esg-value-creation",
+            },
+        ]
+    else:  # Default to ness or other sites
+        return [
+            {
+                "title": "Digital Transformation Trends 2024",
+                "date": "2024-09-15",
+                "excerpt": "Exploring the latest trends in digital transformation...",
+                "url": "https://www.ness.com/insights/digital-transformation-2024",
+            },
+            {
+                "title": "Cloud Migration Best Practices",
+                "date": "2024-09-10",
+                "excerpt": "Key strategies for successful cloud migration projects...",
+                "url": "https://www.ness.com/insights/cloud-migration-best-practices",
+            },
+        ]
 
 
 # Registry of available tools

@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from api.orchestrator import handle_message
 from api.config_loader import load_site_config
+from api.cache import clear_all_cache
 from api.admin_pages import (
     list_candidates,
     set_page_status,
@@ -99,6 +100,20 @@ async def send_message(request: MessageRequest) -> Dict[str, Any]:
     try:
         response = handle_message(request.site_id, request.message)
         return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/session/clear-cache")
+async def clear_cache() -> Dict[str, Any]:
+    """
+    Clear all cached responses.
+
+    Exposed to the chat widget so users can force fresh answers.
+    """
+    try:
+        deleted_count = clear_all_cache()
+        return {"cleared": True, "deleted_count": deleted_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

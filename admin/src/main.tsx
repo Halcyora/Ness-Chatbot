@@ -5,6 +5,6 @@ import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <AdminConsole apiUrl="http://localhost:8080" siteId="ness" />
+    <AdminConsole apiUrl="http://localhost:8080" siteId="kkr" />
   </React.StrictMode>
 )

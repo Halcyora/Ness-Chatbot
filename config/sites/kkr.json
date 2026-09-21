@@ -1,0 +1,108 @@
+{
+  "site_id": "kkr",
+  "base_url": "https://www.kkr.com",
+  "sitemap_seeds": [
+    "/",
+    "/about",
+    "/our-firm",
+    "/global-impact",
+    "/careers",
+    "/insights",
+    "/press",
+    "/investment-approach"
+  ],
+  "dynamic_pages": {
+    "careers": {
+      "url": "/careers",
+      "selector": ".job-listing, .career-card, [data-job-item], .job-item",
+      "trigger_keywords": [
+        "career",
+        "careers",
+        "job",
+        "jobs",
+        "hiring",
+        "vacancy",
+        "open position",
+        "apply",
+        "position",
+        "recruitment",
+        "work at kkr",
+        "join our team"
+      ]
+    },
+    "news": {
+      "url": "/insights",
+      "selector": ".article-card, .blog-post, [data-article-item], .news-item, .insight-card",
+      "trigger_keywords": [
+        "latest news",
+        "press release",
+        "announcement",
+        "recent insight",
+        "new article",
+        "news",
+        "article",
+        "blog",
+        "press",
+        "insights",
+        "latest thinking"
+      ]
+    }
+  },
+  "greeting_keywords": [
+    "hi",
+    "hello",
+    "hey",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "greetings",
+    "howdy",
+    "welcome"
+  ],
+  "branding": {
+    "name": "KKR",
+    "primary_color": "#003366",
+    "secondary_color": "#00509e",
+    "logo_url": "https://www.kkr.com/logo.png",
+    "favicon_url": "https://www.kkr.com/favicon.ico"
+  },
+  "welcome_message": "👋 Welcome to KKR! I'm here to help you learn more about our firm, investment approach, career opportunities, or answer any questions you might have.",
+  "quick_actions": [
+    {
+      "id": "about",
+      "label": "About KKR",
+      "icon": "ℹ️",
+      "route": "rag",
+      "query": "What is KKR and what does the company do?"
+    },
+    {
+      "id": "investment",
+      "label": "Investment Approach",
+      "icon": "💼",
+      "route": "rag",
+      "query": "Describe KKR's investment philosophy and approach to managing capital"
+    },
+    {
+      "id": "careers",
+      "label": "Open Positions",
+      "icon": "🚀",
+      "route": "tool",
+      "tool": "get_open_positions"
+    },
+    {
+      "id": "insights",
+      "label": "Latest Insights",
+      "icon": "📊",
+      "route": "tool",
+      "tool": "get_latest_news"
+    },
+    {
+      "id": "contact",
+      "label": "Contact Us",
+      "icon": "📧",
+      "route": "canned",
+      "reply": "For inquiries, visit https://www.kkr.com/contact. For investor relations: https://www.kkr.com/investor-relations. General: info@kkr.com. What else can I help you with?"
+    }
+  ],
+  "fallback_reply": "I couldn't find specific information about that. For more details, please visit https://www.kkr.com/contact or email info@kkr.com."
+}

@@ -33,12 +33,13 @@ PII_PATTERNS = [
 ]
 
 
-def check_input(message: str) -> Tuple[bool, Optional[str]]:
+def check_input(message: str, site_id: str = "kkr") -> Tuple[bool, Optional[str]]:
     """
     Validate user input for injection attacks and PII.
 
     Args:
         message: User message to validate
+        site_id: Site identifier for branding error messages
 
     Returns:
         Tuple of (is_safe, canned_reply)
@@ -53,18 +54,20 @@ def check_input(message: str) -> Tuple[bool, Optional[str]]:
     # Check for prompt injection patterns
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, message_lower):
+            company_name = "KKR" if site_id == "kkr" else site_id.upper()
             return False, (
-                "I'm designed to help with Ness-related questions only. "
+                f"I'm designed to help with {company_name}-related questions only. "
                 "Please ask about our services, careers, or other company information."
             )
 
     # Check for PII (email, phone, credit card, SSN)
     for pattern in PII_PATTERNS:
         if re.search(pattern, message):
+            contact_email = f"info@{site_id}.com"
             return False, (
                 "I notice you've shared sensitive information. "
                 "Please don't share personal details like email addresses, phone numbers, or financial information in the chat. "
-                "You can contact us directly at contact@ness.com for secure communication."
+                f"You can contact us directly at {contact_email} for secure communication."
             )
 
     return True, None

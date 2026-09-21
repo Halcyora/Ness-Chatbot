@@ -72,11 +72,12 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
         }
 
     # Step 1: Input guardrails
-    is_safe, unsafe_reply = check_input(message)
+    is_safe, unsafe_reply = check_input(message, site_id=site_id)
     if not is_safe:
         return {
             "reply": unsafe_reply or config.get("error_reply", "Unable to process message."),
             "quick_replies": config.get("quick_actions", [])[:3],
+            "trace": {"handler": "blocked", "reason": "input_guardrail"},
         }
 
     # Step 2: Check cache
@@ -86,6 +87,7 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
             "reply": cached_reply,
             "quick_replies": config.get("quick_actions", [])[:3],
             "cached": True,
+            "trace": {"handler": "cache", "cached": True},
         }
 
     # Step 3: Intent classification
@@ -95,23 +97,40 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
     # Step 4: Route to handler
     handler_type = route.get("handler")
     answer = None
+    trace: Dict[str, Any] = {
+        "cached": False,
+        "classification": classification,
+        "handler": handler_type,
+    }
 
     if handler_type == "canned":
         # Canned reply (no LLM call)
         answer = route.get("reply", config.get("welcome_message", ""))
+        trace["llm_used"] = False
 
     elif handler_type == "rag":
         # RAG retrieval
         query = route.get("query", message)
         retriever = RAGRetriever(site_id)
-        chunks = retriever.retrieve(query, top_k=4, min_score=0.7)
+        chunks = retriever.retrieve(query, top_k=4, min_score=0.5)
+
+        trace["rag"] = {
+            "query": query,
+            "chunks_found": len(chunks) if chunks else 0,
+            "scores": [round(chunk["score"], 3) for chunk in chunks] if chunks else [],
+            "sources": [chunk["url"] for chunk in chunks] if chunks else [],
+        }
 
         if chunks:
             # Chunks found - generate answer
             try:
                 llm_provider = get_llm_provider()
+                trace["llm_used"] = True
+                trace["llm_model"] = getattr(llm_provider, "model_id", "unknown")
                 source_text = "\n".join([chunk["content"] for chunk in chunks])
-                prompt = f"""Based on the following information about Ness, answer the user's question concisely:
+                # Determine company name from config
+                company_name = config.get("branding", {}).get("name", "the company")
+                prompt = f"""Based on the following information about {company_name}, answer the user's question concisely:
 
 {source_text}
 
@@ -123,28 +142,38 @@ Answer:"""
 
                 # Output guardrails - check grounding
                 source_chunks = [chunk["content"] for chunk in chunks]
-                if not check_output_grounded(answer, source_chunks):
+                grounded = check_output_grounded(answer, source_chunks)
+                trace["grounded"] = grounded
+                if not grounded:
                     answer = config.get(
                         "fallback_reply",
                         "I found some relevant information but couldn't formulate a confident answer. "
                         "Here's what I found: " + chunks[0]["url"]
                     )
+                    trace["grounding_fallback_used"] = True
 
             except Exception as e:
                 answer = f"Error generating response: {e}"
+                trace["error"] = str(e)
         else:
             # No chunks found
-            answer = config.get(
-                "fallback_reply",
-                "I couldn't find specific information about that. "
-                "You can contact us at contact@ness.com for more details."
+            trace["llm_used"] = False
+            company_name = config.get("branding", {}).get("name", "us")
+            fallback_email = f"info@{config.get('site_id', 'ness')}.com"
+            default_fallback = (
+                f"I couldn't find specific information about that. "
+                f"You can contact us at {fallback_email} for more details."
             )
+            answer = config.get("fallback_reply", default_fallback)
 
     elif handler_type == "tool":
         # Tool-calling
         tool_name = route.get("tool_name", "")
+        trace["llm_used"] = False
+        trace["tool"] = {"name": tool_name}
         try:
-            tool_result = call_tool(tool_name)
+            tool_result = call_tool(tool_name, site_id=site_id)
+            trace["tool"]["result_count"] = len(tool_result) if tool_result else 0
             if tool_result:
                 # Format tool result for display
                 lines = [f"Found {len(tool_result)} results:\n"]
@@ -165,6 +194,7 @@ Answer:"""
 
         except Exception as e:
             answer = f"Error retrieving information: {e}"
+            trace["error"] = str(e)
 
     # Fallback if no answer was set
     if not answer:
@@ -182,10 +212,13 @@ Answer:"""
         })
 
     end_time = datetime.utcnow()
+    duration_ms = (end_time - start_time).total_seconds() * 1000
+    trace["duration_ms"] = round(duration_ms, 2)
 
     return {
         "reply": answer,
         "quick_replies": quick_replies,
         "handler": handler_type,
-        "duration_ms": (end_time - start_time).total_seconds() * 1000,
+        "duration_ms": duration_ms,
+        "trace": trace,
     }

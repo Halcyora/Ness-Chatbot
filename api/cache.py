@@ -107,3 +107,33 @@ def set_cached(query: str, answer: str, ttl_seconds: int = CACHE_TTL_SECONDS) ->
     except ClientError as e:
         print(f"Cache write error: {e}")
         # Don't raise - caching is optional
+
+
+def clear_all_cache() -> int:
+    """
+    Delete all entries from the response cache table.
+
+    Returns:
+        Number of entries deleted.
+    """
+    table = get_dynamodb_table()
+    deleted_count = 0
+
+    try:
+        scan_kwargs: dict = {}
+        while True:
+            response = table.scan(**scan_kwargs)
+            items = response.get("Items", [])
+
+            for item in items:
+                table.delete_item(Key={"query_hash": item["query_hash"]})
+                deleted_count += 1
+
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    except ClientError as e:
+        print(f"Cache clear error: {e}")
+
+    return deleted_count

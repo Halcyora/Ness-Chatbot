@@ -5,9 +5,15 @@ Creates FAISS indices from chunked documents and uploads to MinIO/S3.
 """
 
 import os
+import sys
+import io
 import pickle
 from typing import List, Dict, Any
 from datetime import datetime
+
+# Handle Windows Unicode output issues
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import boto3
 import numpy as np
@@ -104,7 +110,7 @@ def embed_and_index(site_id: str) -> None:
 
     Uploads the index to MinIO.
     """
-    print(f"\n📚 Creating index for site: {site_id}")
+    print(f"\n[INDEX] Creating index for site: {site_id}")
     print("=" * 60)
 
     # Get LLM provider for embeddings
@@ -112,29 +118,29 @@ def embed_and_index(site_id: str) -> None:
         llm_provider = get_llm_provider()
         print(f"Using provider: {llm_provider.provider_name}")
     except Exception as e:
-        print(f"⚠️  LLM provider error (embeddings may fail): {e}")
+        print(f"[WARN] LLM provider error (embeddings may fail): {e}")
         llm_provider = None
 
     # Fetch included pages
-    print("\n1️⃣  Fetching included pages...")
+    print("\n[1] Fetching included pages...")
     pages = get_included_pages(site_id)
     print(f"   Found {len(pages)} pages to embed")
 
     if not pages:
-        print("   ⚠️  No included pages to embed!")
+        print("   [WARN] No included pages to embed!")
         return
 
     # Chunk documents
-    print("\n2️⃣  Chunking documents...")
+    print("\n[2] Chunking documents...")
     chunks = chunk_documents(pages, CHUNK_SIZE, CHUNK_OVERLAP)
     print(f"   Created {len(chunks)} chunks from {len(pages)} pages")
 
     if not chunks:
-        print("   ⚠️  No chunks produced (pages have no content) - skipping embedding")
+        print("   [WARN] No chunks produced (pages have no content) - skipping embedding")
         return
 
     # Create embeddings (optional - mock if LLM unavailable)
-    print("\n3️⃣  Generating embeddings...")
+    print("\n[3] Generating embeddings...")
 
     if llm_provider:
         try:
@@ -150,21 +156,21 @@ def embed_and_index(site_id: str) -> None:
                 try:
                     batch_embeddings = llm_provider.embed(batch)
                     embeddings.extend(batch_embeddings)
-                    print(f"   ✓ Embedded batch {i // batch_size + 1}/{(len(chunk_texts) + batch_size - 1) // batch_size}")
+                    print(f"   [OK] Embedded batch {i // batch_size + 1}/{(len(chunk_texts) + batch_size - 1) // batch_size}")
                 except Exception as e:
-                    print(f"   ⚠️  Embedding batch error: {e}")
+                    print(f"   [WARN] Embedding batch error: {e}")
                     # Fall back to dummy embeddings for testing
                     embeddings.extend([[0.0] * EMBEDDING_DIMENSION for _ in batch])
 
         except Exception as e:
-            print(f"   ⚠️  Embedding error (using dummy embeddings): {e}")
+            print(f"   [WARN] Embedding error (using dummy embeddings): {e}")
             embeddings = [[0.0] * EMBEDDING_DIMENSION for _ in chunks]
     else:
-        print("   ⚠️  No LLM provider, using dummy embeddings")
+        print("   [WARN] No LLM provider, using dummy embeddings")
         embeddings = [[0.0] * EMBEDDING_DIMENSION for _ in chunks]
 
     # Create FAISS index
-    print("\n4️⃣  Creating FAISS index...")
+    print("\n[4] Creating FAISS index...")
     try:
         import faiss
 
@@ -183,7 +189,7 @@ def embed_and_index(site_id: str) -> None:
         index = faiss.IndexFlatIP(dimension)
         index.add(embeddings_array)
 
-        print(f"   ✅ FAISS index created with {index.ntotal} vectors")
+        print(f"   [OK] FAISS index created with {index.ntotal} vectors")
 
         # Prepare metadata
         metadata = {
@@ -195,7 +201,7 @@ def embed_and_index(site_id: str) -> None:
         }
 
         # Upload to MinIO
-        print("\n5️⃣  Uploading to MinIO...")
+        print("\n[5] Uploading to MinIO...")
         s3_client = get_s3_client()
 
         # Upload FAISS index
@@ -207,7 +213,7 @@ def embed_and_index(site_id: str) -> None:
             Key=index_key,
             Body=index_bytes,
         )
-        print(f"   ✅ Uploaded FAISS index to s3://{S3_BUCKET}/{index_key}")
+        print(f"   [OK] Uploaded FAISS index to s3://{S3_BUCKET}/{index_key}")
 
         # Upload metadata/chunk info
         metadata_key = f"{site_id}/metadata.pkl"
@@ -217,28 +223,30 @@ def embed_and_index(site_id: str) -> None:
             Key=metadata_key,
             Body=metadata_bytes,
         )
-        print(f"   ✅ Uploaded metadata to s3://{S3_BUCKET}/{metadata_key}")
+        print(f"   [OK] Uploaded metadata to s3://{S3_BUCKET}/{metadata_key}")
 
         print(f"\n{'=' * 60}")
-        print(f"✅ Index creation complete!")
+        print(f"[OK] Index creation complete!")
         print(f"   Site: {site_id}")
         print(f"   Pages: {len(pages)}")
         print(f"   Chunks: {len(chunks)}")
         print(f"   Vectors: {index.ntotal}")
 
     except ImportError:
-        print("❌ FAISS not installed. Install with: pip install faiss-cpu")
+        print("[ERROR] FAISS not installed. Install with: pip install faiss-cpu")
         raise
     except Exception as e:
-        print(f"❌ Error creating index: {e}")
+        print(f"[ERROR] Error creating index: {e}")
         raise
 
 
 if __name__ == "__main__":
+    import sys
+    site_id = sys.argv[1] if len(sys.argv) > 1 else "ness"
     try:
-        embed_and_index("ness")
+        embed_and_index(site_id)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\\n[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
         exit(1)
