@@ -24,6 +24,7 @@ aws_region = os.getenv("AWS_REGION", "us-east-1")
 # Table names
 table_candidates = os.getenv("DYNAMODB_TABLE_CANDIDATES", "page_candidates")
 table_cache = os.getenv("DYNAMODB_TABLE_CACHE", "response_cache")
+table_sessions = os.getenv("DYNAMODB_TABLE_SESSIONS", "session_history")
 
 # Create DynamoDB resource
 dynamodb = boto3.resource(
@@ -86,6 +87,32 @@ def create_response_cache_table():
             raise
 
 
+def create_session_history_table():
+    """Create session_history table for short-term conversation memory."""
+    try:
+        table = dynamodb.create_table(
+            TableName=table_sessions,
+            KeySchema=[
+                {"AttributeName": "session_id", "KeyType": "HASH"},  # Partition key
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "session_id", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        print(f"✅ Created table: {table_sessions}")
+        table.wait_until_exists()
+        dynamodb.meta.client.update_time_to_live(
+            TableName=table_sessions,
+            TimeToLiveSpecification={"AttributeName": "ttl", "Enabled": True},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ResourceInUseException":
+            print(f"ℹ️  Table already exists: {table_sessions}")
+        else:
+            raise
+
+
 if __name__ == "__main__":
     print(f"Connecting to DynamoDB at {dynamodb_endpoint}...")
     print(f"Region: {aws_region}\n")
@@ -93,6 +120,7 @@ if __name__ == "__main__":
     try:
         create_page_candidates_table()
         create_response_cache_table()
+        create_session_history_table()
         print("\n✅ All tables ready!")
     except Exception as e:
         print(f"\n❌ Error: {e}")

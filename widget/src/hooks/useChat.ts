@@ -3,7 +3,7 @@ import type { ChatResponse } from '../types'
 const API_BASE_URL = 'http://localhost:8080'
 
 export const useChat = () => {
-  const sendMessage = async (message: string): Promise<ChatResponse> => {
+  const sendMessage = async (message: string, sessionId: string): Promise<ChatResponse> => {
     try {
       const response = await fetch(`${API_BASE_URL}/message`, {
         method: 'POST',
@@ -13,6 +13,7 @@ export const useChat = () => {
         body: JSON.stringify({
           site_id: 'kkr',
           message,
+          session_id: sessionId,
         }),
       })
 

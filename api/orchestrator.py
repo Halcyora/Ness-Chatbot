@@ -24,6 +24,7 @@ from api.intent_router import classify, route_message
 from api.rag_retriever import RAGRetriever, call_tool
 from api.llm import get_llm_provider
 from api.cache import get_cached, set_cached
+from api.session_memory import get_history, append_turn
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ if LANGSMITH_API_KEY:
     os.environ["LANGCHAIN_PROJECT"] = LANGSMITH_PROJECT
 
 
-def handle_message(site_id: str, message: str) -> Dict[str, Any]:
+def handle_message(site_id: str, message: str, session_id: str = "") -> Dict[str, Any]:
     """
     Handle a user message end-to-end.
 
@@ -47,19 +48,21 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
     2. Input guardrails (block injection/PII)
     3. Check cache
     4. Intent classification
-    5. Route to handler (canned/RAG/tool)
+    5. Route to handler (canned/RAG/tool), using recent session history for follow-ups
     6. Generate answer (if needed)
     7. Output guardrails
-    8. Cache & return
+    8. Cache, persist turn to session history & return
 
     Args:
         site_id: Site identifier (e.g., 'ness')
         message: User message
+        session_id: Client-generated id used to look up recent conversation turns
 
     Returns:
         Dict with 'reply' and 'quick_replies'
     """
     start_time = datetime.utcnow()
+    history = get_history(session_id) if session_id else []
 
     # Step 0: Load config
     try:
@@ -80,8 +83,9 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
             "trace": {"handler": "blocked", "reason": "input_guardrail"},
         }
 
-    # Step 2: Check cache
-    cached_reply = get_cached(message)
+    # Step 2: Check cache (skipped mid-conversation so contextual follow-ups aren't
+    # answered with a stale reply cached under the same literal text)
+    cached_reply = get_cached(message) if not history else None
     if cached_reply:
         return {
             "reply": cached_reply,
@@ -109,10 +113,14 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
         trace["llm_used"] = False
 
     elif handler_type == "rag":
-        # RAG retrieval
+        # RAG retrieval - augment with the last user turn so follow-up questions
+        # (e.g. "what about that?") retrieve relevant chunks too
         query = route.get("query", message)
+        last_user_turn = next((t["content"] for t in reversed(history) if t.get("role") == "user"), "")
+        retrieval_query = f"{last_user_turn} {query}".strip() if last_user_turn else query
+
         retriever = RAGRetriever(site_id)
-        chunks = retriever.retrieve(query, top_k=4, min_score=0.5)
+        chunks = retriever.retrieve(retrieval_query, top_k=4, min_score=0.5)
 
         trace["rag"] = {
             "query": query,
@@ -130,8 +138,17 @@ def handle_message(site_id: str, message: str) -> Dict[str, Any]:
                 source_text = "\n".join([chunk["content"] for chunk in chunks])
                 # Determine company name from config
                 company_name = config.get("branding", {}).get("name", "the company")
-                prompt = f"""Based on the following information about {company_name}, answer the user's question concisely:
 
+                conversation_context = ""
+                if history:
+                    recent = "\n".join(
+                        f"{'User' if t['role'] == 'user' else 'Assistant'}: {t['content']}"
+                        for t in history[-4:]
+                    )
+                    conversation_context = f"\nPrevious conversation (for context only):\n{recent}\n"
+
+                prompt = f"""Based on the following information about {company_name}, answer the user's question concisely:
+{conversation_context}
 {source_text}
 
 User question: {query}
@@ -200,10 +217,16 @@ Answer:"""
     if not answer:
         answer = config.get("error_reply", "Unable to process your request.")
 
-    # Step 5: Cache the answer
-    set_cached(message, answer)
+    # Step 5: Cache the answer (skipped mid-conversation, see step 2)
+    if not history:
+        set_cached(message, answer)
 
-    # Step 6: Prepare quick replies
+    # Step 6: Persist this turn so follow-up questions have context
+    if session_id:
+        append_turn(session_id, message, answer)
+        trace["history_turns_used"] = len(history)
+
+    # Step 7: Prepare quick replies
     quick_replies = []
     for action in config.get("quick_actions", [])[:5]:
         quick_replies.append({

@@ -3,12 +3,37 @@ import './App.css'
 import type { ChatMessage, ChatResponse, ChatTrace, QuickReply } from './types'
 import { useChat } from './hooks/useChat'
 
+const SESSION_ID_KEY = 'kkr_chat_session_id'
+const MESSAGES_KEY = 'kkr_chat_messages'
+
+// Reuse a session id across page loads so the backend can resolve follow-up questions
+const getOrCreateSessionId = (): string => {
+  let id = localStorage.getItem(SESSION_ID_KEY)
+  if (!id) {
+    id = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    localStorage.setItem(SESSION_ID_KEY, id)
+  }
+  return id
+}
+
+const loadSavedMessages = (): ChatMessage[] => {
+  try {
+    const raw = localStorage.getItem(MESSAGES_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as ChatMessage[]
+    return parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }))
+  } catch {
+    return []
+  }
+}
+
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [darkMode, setDarkMode] = useState(false)
   const [input, setInput] = useState('')
   const [quickActions, setQuickActions] = useState<QuickReply[]>([])
+  const sessionIdRef = useRef<string>(getOrCreateSessionId())
   const { sendMessage } = useChat()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -19,6 +44,10 @@ function App() {
 
   useEffect(() => {
     scrollToBottom()
+    // Persist conversation so a page refresh doesn't lose it
+    if (messages.length > 0) {
+      localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages))
+    }
   }, [messages])
 
   useEffect(() => {
@@ -43,7 +72,7 @@ function App() {
     setIsLoading(true)
 
     try {
-      const response: ChatResponse = await sendMessage(text)
+      const response: ChatResponse = await sendMessage(text, sessionIdRef.current)
       const botMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         text: response.reply,
@@ -100,11 +129,12 @@ function App() {
       const response = await fetch('http://localhost:8080/session/clear-cache', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionIdRef.current }),
       })
       const data = await response.json()
       const botMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
-        text: `Cache cleared (${data.deleted_count ?? 0} entries removed). Future questions will get fresh answers.`,
+        text: `Cache cleared (${data.deleted_count ?? 0} entries removed). Conversation memory reset too. Future questions will get fresh answers.`,
         sender: 'bot',
         timestamp: new Date(),
       }
@@ -138,8 +168,10 @@ function App() {
   }
 
   useEffect(() => {
-    // Fetch initial config and greeting from API
+    // Restore a persisted conversation (survives page refresh) or fetch a fresh greeting
     const initializeChat = async () => {
+      const saved = loadSavedMessages()
+
       try {
         const response = await fetch('http://localhost:8080/session/start', {
           method: 'POST',
@@ -156,7 +188,13 @@ function App() {
           route: action.route, // Store the route type
           reply: action.reply, // Store canned reply
         }))
-        
+        setQuickActions(quickActions)
+
+        if (saved.length > 0) {
+          setMessages(saved)
+          return
+        }
+
         const greeting: ChatMessage = {
           id: '0',
           text: data.welcome_message || 'Hi there! How can I help you today?',
@@ -164,17 +202,21 @@ function App() {
           timestamp: new Date(),
         }
         setMessages([greeting])
-        setQuickActions(quickActions)
       } catch (error) {
         console.error('Failed to load config:', error)
-        // Fallback to hardcoded greeting
-        const greeting: ChatMessage = {
-          id: '0',
-          text: 'Hi there! I\'m your KKR assistant. How can I help you today?',
-          sender: 'bot',
-          timestamp: new Date(),
+
+        if (saved.length > 0) {
+          setMessages(saved)
+        } else {
+          // Fallback to hardcoded greeting
+          const greeting: ChatMessage = {
+            id: '0',
+            text: 'Hi there! I\'m your KKR assistant. How can I help you today?',
+            sender: 'bot',
+            timestamp: new Date(),
+          }
+          setMessages([greeting])
         }
-        setMessages([greeting])
         setQuickActions([
           { id: 'about', label: 'About KKR', icon: 'ℹ️' },
           { id: 'investment', label: 'Investment Approach', icon: '💼' },

@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from api.orchestrator import handle_message
 from api.config_loader import load_site_config
 from api.cache import clear_all_cache
+from api.session_memory import clear_session
 from api.admin_pages import (
     list_candidates,
     set_page_status,
@@ -51,11 +52,16 @@ class StartSessionRequest(BaseModel):
 class MessageRequest(BaseModel):
     site_id: str = "ness"
     message: str
+    session_id: str = ""
 
 
 class SetPageStatusRequest(BaseModel):
     url: str
     status: str  # "included", "excluded", "pending"
+
+
+class ClearCacheRequest(BaseModel):
+    session_id: str = ""
 
 
 # Utility functions
@@ -95,24 +101,27 @@ async def send_message(request: MessageRequest) -> Dict[str, Any]:
     """
     Send a user message and get a response.
 
-    Handles the full orchestration pipeline.
+    Handles the full orchestration pipeline. Passing the same session_id across
+    calls lets the bot resolve follow-up questions using recent conversation turns.
     """
     try:
-        response = handle_message(request.site_id, request.message)
+        response = handle_message(request.site_id, request.message, session_id=request.session_id)
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/session/clear-cache")
-async def clear_cache() -> Dict[str, Any]:
+async def clear_cache(request: ClearCacheRequest = ClearCacheRequest()) -> Dict[str, Any]:
     """
-    Clear all cached responses.
+    Clear all cached responses and, if provided, the session's conversation memory.
 
-    Exposed to the chat widget so users can force fresh answers.
+    Exposed to the chat widget so users can force fresh answers / start over.
     """
     try:
         deleted_count = clear_all_cache()
+        if request.session_id:
+            clear_session(request.session_id)
         return {"cleared": True, "deleted_count": deleted_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
