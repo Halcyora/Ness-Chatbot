@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 from api.config_loader import load_site_config
 from ingestion.scraper import discover_pages as scraper_discover
-from ingestion.embedder import embed_and_index
+from ingestion.embedder import embed_and_index, get_included_pages
 
 # Load environment
 load_dotenv()
@@ -187,12 +187,18 @@ def trigger_embed(site_id: str) -> Dict[str, Any]:
 
     try:
         start_time = datetime.utcnow()
+        
+        # Get count of pages to embed before running
+        pages = get_included_pages(site_id)
+        page_count = len(pages)
+        
         embed_and_index(site_id)
         end_time = datetime.utcnow()
 
         return {
             "status": "success",
             "site_id": site_id,
+            "embedded_count": page_count,
             "started_at": start_time.isoformat() + "Z",
             "completed_at": end_time.isoformat() + "Z",
             "duration_seconds": (end_time - start_time).total_seconds(),

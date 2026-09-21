@@ -68,27 +68,29 @@ def _is_follow_up_refinement(message: str) -> bool:
     """
     Detect if a message is a contextual follow-up/refinement of previous results.
     
-    Examples of follow-ups:
+    True follow-ups have multiple context-dependent indicators:
     - "Tell me more about the first one"
-    - "Only show me the flash macro news"
-    - "What about that?"
-    - "Which one is the best?"
+    - "Which of those is the best?"
+    - "What about that?" (referential)
+    - "Only show Flash Macro articles"
     
-    These should use RAG with conversation history rather than re-running the tool.
+    NOT follow-ups (should go to tool):
+    - "Show job openings"
+    - "Tell me about careers"
+    
+    The key: follow-ups reference previous results with words like "that", "those", "first",
+    or explicitly ask for refinements with "more", "only", "filter", etc.
     """
     message_lower = message.lower()
     
-    # Refinement patterns that indicate context-dependent questions
-    followup_patterns = [
-        r"\b(more|tell|show|which|about|that|one|ones|first|second|last|these|those|this|it|them)\b",
+    # Strong follow-up indicators (contextual references + refinement keywords)
+    strong_patterns = [
+        r"\b(more|tell me more|what about|which|filter|narrow|specific)\b.*\b(that|those|these|first|second|last|one|ones|it|them)\b",
         r"\bonly\b",
-        r"\bfilter|narrow|specific\b",
-        r"\bdetail|explain|describe\b",
-        r"\bwhat about",
-        r"\bfocus on",
+        r"\b(what about that|what about those|tell me more about the|which one)\b",
     ]
     
-    for pattern in followup_patterns:
+    for pattern in strong_patterns:
         if re.search(pattern, message_lower):
             return True
     

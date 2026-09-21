@@ -1,24 +1,69 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type { Components } from 'react-markdown'
 import './App.css'
 import type { ChatMessage, ChatResponse, ChatTrace, QuickReply } from './types'
 import { useChat } from './hooks/useChat'
 
-const SESSION_ID_KEY = 'kkr_chat_session_id'
-const MESSAGES_KEY = 'kkr_chat_messages'
+const SESSION_ID_KEY = 'kkr_chat_session_id'  // sessionStorage (per-tab)
+const MESSAGES_KEY = 'kkr_chat_messages'       // sessionStorage (per-tab)
 
-// Reuse a session id across page loads so the backend can resolve follow-up questions
+// Markdown components for rendering bot responses
+const markdownComponents: Components = {
+  p: ({ children }) => <p style={{ margin: '0.5em 0', lineHeight: 1.5 }}>{children}</p>,
+  strong: ({ children }) => <strong style={{ fontWeight: 'bold' }}>{children}</strong>,
+  em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#0066cc', textDecoration: 'underline' }}>
+      {children}
+    </a>
+  ),
+  ul: ({ children }) => (
+    <ul style={{ margin: '0.5em 0', marginLeft: '1.5em', listStyle: 'disc' }}>
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol style={{ margin: '0.5em 0', marginLeft: '1.5em', listStyle: 'decimal' }}>
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => <li style={{ margin: '0.25em 0' }}>{children}</li>,
+  h1: ({ children }) => <h1 style={{ fontSize: '1.2em', fontWeight: 'bold', margin: '0.5em 0' }}>{children}</h1>,
+  h2: ({ children }) => <h2 style={{ fontSize: '1.1em', fontWeight: 'bold', margin: '0.4em 0' }}>{children}</h2>,
+  h3: ({ children }) => <h3 style={{ fontSize: '1em', fontWeight: 'bold', margin: '0.3em 0' }}>{children}</h3>,
+  code: ({ children }) => (
+    <code style={{ backgroundColor: 'rgba(0,0,0,0.1)', padding: '2px 4px', borderRadius: '3px', fontFamily: 'monospace', fontSize: '0.9em' }}>
+      {children}
+    </code>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote style={{ borderLeft: '3px solid #ccc', marginLeft: '0.5em', paddingLeft: '0.5em', fontStyle: 'italic', opacity: 0.8 }}>
+      {children}
+    </blockquote>
+  ),
+}
+
+/**
+ * Generate or retrieve a session ID for this tab.
+ * 
+ * Uses sessionStorage (not localStorage) so each NEW TAB/WINDOW gets a NEW session_id.
+ * This allows multiple independent conversations in parallel.
+ * Message history is also stored per-tab, so closing a tab loses that conversation.
+ */
 const getOrCreateSessionId = (): string => {
-  let id = localStorage.getItem(SESSION_ID_KEY)
+  let id = sessionStorage.getItem(SESSION_ID_KEY)
   if (!id) {
     id = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    localStorage.setItem(SESSION_ID_KEY, id)
+    sessionStorage.setItem(SESSION_ID_KEY, id)
   }
   return id
 }
 
 const loadSavedMessages = (): ChatMessage[] => {
   try {
-    const raw = localStorage.getItem(MESSAGES_KEY)
+    const raw = sessionStorage.getItem(MESSAGES_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as ChatMessage[]
     return parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }))
@@ -44,9 +89,9 @@ function App() {
 
   useEffect(() => {
     scrollToBottom()
-    // Persist conversation so a page refresh doesn't lose it
+    // Persist conversation for this tab (page refresh preserves it, but new tab loses it)
     if (messages.length > 0) {
-      localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages))
+      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(messages))
     }
   }, [messages])
 
@@ -422,7 +467,15 @@ function App() {
           <div key={message.id} style={{ display: 'flex', flexDirection: 'column', alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start' }}>
             <div style={messageStyle(message.sender)}>
               <div style={bubbleStyle(message.sender)}>
-                <p style={{ margin: 0, lineHeight: 1.4 }}>{message.text}</p>
+                {message.sender === 'user' ? (
+                  <p style={{ margin: 0, lineHeight: 1.4 }}>{message.text}</p>
+                ) : (
+                  <div style={{ lineHeight: 1.5 }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {message.text}
+                    </ReactMarkdown>
+                  </div>
+                )}
                 {message.duration && (
                   <p style={{ margin: '8px 0 0 0', fontSize: '11px', opacity: 0.7 }}>
                     {(message.duration / 1000).toFixed(2)}s

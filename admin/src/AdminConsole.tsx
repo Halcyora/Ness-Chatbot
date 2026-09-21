@@ -567,6 +567,33 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
     }
   }
 
+  const handleSelectAll = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newStatus = e.target.checked ? 'included' : 'excluded'
+    
+    // Update all pages in the database
+    try {
+      const updatePromises = pages.map((page) =>
+        fetch(`${apiUrl}/admin/pages/${encodeURIComponent(page.url)}?site_id=${siteId}`, {
+          method: 'PUT',
+          headers: getHeaders(),
+          body: JSON.stringify({ url: page.url, status: newStatus }),
+        })
+      )
+      
+      const responses = await Promise.all(updatePromises)
+      const allOk = responses.every((r) => r.ok)
+      
+      if (!allOk) {
+        throw new Error('Failed to update some pages')
+      }
+      
+      // Update local state only after database updates succeed
+      setPages((prev) => prev.map((p) => ({ ...p, status: newStatus as any })))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update pages')
+    }
+  }
+
   const handleRefreshPages = async () => {
     setLoading(true)
     setError(null)
@@ -616,7 +643,9 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
       }
 
       const data = await response.json()
-      alert(`Successfully embedded ${data.embedded_count || 0} pages`)
+      const embeddedCount = data.embedded_count || 0
+      const duration = Math.round(data.duration_seconds || 0)
+      alert(`✅ Successfully embedded ${embeddedCount} pages in ${duration}s`)
       setEmbeddingProgress(100)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Embedding failed')
@@ -776,11 +805,8 @@ const AdminConsole: React.FC<AdminConsoleProps> = ({
                     <input
                       type="checkbox"
                       checked={pages.every((p) => p.status === 'included')}
-                      onChange={(e) => {
-                        const newStatus = e.target.checked ? 'included' : 'excluded'
-                        setPages((prev) => prev.map((p) => ({ ...p, status: newStatus as any })))
-                      }}
-                      title="Select all"
+                      onChange={handleSelectAll}
+                      title="Select/deselect all pages"
                     />
                   </th>
                   <th>Page Title</th>

@@ -149,8 +149,17 @@ def handle_message(site_id: str, message: str, session_id: str = "") -> Dict[str
                     )
                     conversation_context = f"\nPrevious conversation (for context only):\n{recent}\n"
 
-                prompt = f"""Based on the following information about {company_name}, answer the user's question concisely:
+                prompt = f"""Based on the following information about {company_name}, answer the user's question clearly and well-formatted.
+
+Format your response with:
+- Clear headings (use # for main title, ## for sections)
+- Bullet points for lists
+- **Bold** for important terms
+- Proper paragraphs separated by blank lines
+- Links in [text](url) format when referencing sources
+
 {conversation_context}
+Information:
 {source_text}
 
 User question: {query}
