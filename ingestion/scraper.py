@@ -56,13 +56,17 @@ def _get_session() -> requests.Session:
 
 
 def is_challenge_page(html: str) -> bool:
-    """Detect anti-bot/CAPTCHA challenge pages so we don't index them as real content."""
+    """Detect anti-bot/CAPTCHA challenge pages and HTTP error pages so we don't index them as real content."""
     lower = html.lower()
     if any(marker in lower for marker in _CHALLENGE_MARKERS):
         return True
-    # Real pages have far more markup than a bare challenge stub
+    # Real pages have far more markup than a bare challenge stub or error page
     if len(html.strip()) < 500 and "<title>" not in lower:
         return True
+    # Check for common HTTP error page signatures (even if we somehow missed the status code)
+    if any(err in lower for err in ("403", "404", "500", "502", "503", "error", "forbidden", "not found")):
+        if len(html.strip()) < 1000:  # Error pages are typically small
+            return True
     return False
 
 
