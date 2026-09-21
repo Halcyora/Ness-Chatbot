@@ -189,7 +189,7 @@ Answer:"""
         trace["llm_used"] = False
         trace["tool"] = {"name": tool_name}
         try:
-            tool_result = call_tool(tool_name, site_id=site_id)
+            tool_result = call_tool(tool_name, site_id=site_id, message=message)
             trace["tool"]["result_count"] = len(tool_result) if tool_result else 0
             if tool_result:
                 # Format tool result for display

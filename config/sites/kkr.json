@@ -15,6 +15,10 @@
     "careers": {
       "url": "/careers",
       "selector": ".job-listing, .career-card, [data-job-item], .job-item",
+      "ats": {
+        "provider": "greenhouse",
+        "board_token": "stage"
+      },
       "trigger_keywords": [
         "career",
         "careers",
@@ -33,6 +37,14 @@
     "news": {
       "url": "/insights",
       "selector": ".article-card, .blog-post, [data-article-item], .news-item, .insight-card",
+      "source": {
+        "type": "aem_fragment",
+        "url": "https://www.kkr.com/content/kkr/sites/global/en/insights/jcr:content/root/main-par/section/section-par/insights_filter_copy.load.p1.sort.desc.html",
+        "base_url": "https://www.kkr.com",
+        "item_selector": "a.article-teaser__link",
+        "title_selector": ".article-teaser__title span",
+        "date_selector": ".article-teaser__date time"
+      },
       "trigger_keywords": [
         "latest news",
         "press release",

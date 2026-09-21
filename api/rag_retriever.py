@@ -7,14 +7,18 @@ Returns contextual chunks for grounding LLM responses.
 
 import os
 import pickle
+import re
+import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 import boto3
 import numpy as np
+import requests
 from botocore.exceptions import ClientError, EndpointConnectionError
 from dotenv import load_dotenv
 
+from api.config_loader import load_site_config
 from api.llm import get_llm_provider
 
 # Load environment
@@ -24,6 +28,10 @@ load_dotenv()
 S3_ENDPOINT = os.getenv("AWS_ENDPOINT_URL", "http://localhost:9000")
 S3_BUCKET = os.getenv("S3_BUCKET_INDEX", "ness-chatbot-index")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+# Cache live tool-calling fetches (ATS jobs, news fragments) in-process to avoid hitting providers on every message
+_LIVE_FETCH_CACHE_TTL = 600  # seconds
+_live_fetch_cache: Dict[str, tuple] = {}  # cache key -> (fetched_at, data)
 
 
 class RAGRetriever:
@@ -154,107 +162,228 @@ class RAGRetriever:
             return None
 
 
+# Maps a phrase/code found anywhere in a location string to additional country-level search aliases
+_COUNTRY_ALIASES = {
+    "united states": ["us", "usa", "america"],
+    ", ny": ["us", "usa", "united states", "america"],
+    ", ca": ["us", "usa", "united states", "america"],
+    "united kingdom": ["uk", "britain", "england"],
+    ", uk": ["uk", "united kingdom", "britain", "england"],
+}
+
+
+def _location_search_terms(location: str) -> List[str]:
+    """Build the set of words/phrases that should match a given location string."""
+    location_lower = location.lower()
+    parts = [p for p in re.split(r"[,\s]+", location_lower) if len(p) > 2]
+
+    terms = list(parts)
+    for marker, aliases in _COUNTRY_ALIASES.items():
+        if marker in location_lower:
+            terms.extend(aliases)
+    return terms
+
+
+def _filter_by_location(items: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
+    """Filter items whose 'location' (city, state/country code, or country alias) is mentioned in the
+    user's message; falls back to all items if none match."""
+    if not message:
+        return items
+
+    msg_lower = message.lower()
+    filtered = []
+    for item in items:
+        terms = _location_search_terms(item.get("location", ""))
+        if any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", msg_lower) for term in terms):
+            filtered.append(item)
+    return filtered if filtered else items
+
+
+# Cache embeddings for the current job title snapshot, refreshed alongside the job list
+_job_embedding_cache: Dict[str, tuple] = {}  # cache_key -> (fetched_at, embeddings ndarray, titles used)
+
+
+def _job_search_text(position: Dict[str, Any]) -> str:
+    return f"{position.get('title', '')} - {position.get('location', '')}"
+
+
+def _get_job_title_embeddings(cache_key: str, positions: List[Dict[str, Any]]) -> Optional[np.ndarray]:
+    """Compute (and cache) embeddings for job titles, recomputed whenever the underlying job list changes."""
+    titles = [_job_search_text(p) for p in positions]
+    now = time.time()
+    cached = _job_embedding_cache.get(cache_key)
+    if cached and (now - cached[0]) < _LIVE_FETCH_CACHE_TTL and cached[2] == titles:
+        return cached[1]
+
+    try:
+        llm_provider = get_llm_provider()
+        embeddings = np.array(llm_provider.embed(titles), dtype="float32")
+        _job_embedding_cache[cache_key] = (now, embeddings, titles)
+        return embeddings
+    except Exception as e:
+        print(f"Job title embedding failed: {e}")
+        return None
+
+
+def _semantic_rank_positions(
+    positions: List[Dict[str, Any]],
+    message: str,
+    cache_key: str,
+    top_n: int = 5,
+) -> List[Dict[str, Any]]:
+    """
+    Re-rank (never drop) open positions by semantic similarity between the user's message and each job
+    title/location, so free-text role queries (e.g. "engineering roles") surface the most relevant jobs
+    first even when they don't share exact keywords. Skipped for small result sets since there's nothing
+    to re-rank once everything already fits on screen.
+    """
+    if not message or len(positions) <= top_n:
+        return positions
+
+    embeddings = _get_job_title_embeddings(cache_key, positions)
+    if embeddings is None:
+        return positions
+
+    try:
+        llm_provider = get_llm_provider()
+        query_vec = np.array(llm_provider.embed([message])[0], dtype="float32")
+
+        query_norm = query_vec / (np.linalg.norm(query_vec) or 1e-10)
+        title_norms = embeddings / (np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-10)
+        similarities = title_norms @ query_norm
+
+        ranked_indices = np.argsort(-similarities)
+        return [positions[i] for i in ranked_indices]
+    except Exception as e:
+        print(f"Semantic ranking failed, keeping original order: {e}")
+        return positions
+
+
+def _fetch_greenhouse_jobs(board_token: str) -> Optional[List[Dict[str, Any]]]:
+    """Fetch live open positions from Greenhouse's public job board API, with a short-lived cache."""
+    cached = _live_fetch_cache.get(board_token)
+    if cached and (time.time() - cached[0]) < _LIVE_FETCH_CACHE_TTL:
+        return cached[1]
+
+    try:
+        resp = requests.get(
+            f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs",
+            timeout=8,
+        )
+        resp.raise_for_status()
+        jobs = [
+            {
+                "title": job.get("title", "").strip(),
+                "location": job.get("location", {}).get("name", "").strip(),
+                "department": "",
+                "url": job.get("absolute_url", ""),
+            }
+            for job in resp.json().get("jobs", [])
+        ]
+        _live_fetch_cache[board_token] = (time.time(), jobs)
+        return jobs
+    except Exception as e:
+        print(f"Greenhouse jobs fetch failed for board '{board_token}': {e}")
+        return None
+
+
+def _fetch_live_positions(site_id: str) -> Optional[List[Dict[str, Any]]]:
+    """Fetch live open positions using the ATS configured for this site (see dynamic_pages.careers.ats)."""
+    try:
+        config = load_site_config(site_id)
+    except Exception:
+        return None
+
+    ats = config.get("dynamic_pages", {}).get("careers", {}).get("ats", {})
+    if ats.get("provider") == "greenhouse" and ats.get("board_token"):
+        return _fetch_greenhouse_jobs(ats["board_token"])
+    return None
+
+
+def _fetch_aem_articles(source_cfg: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Fetch and parse a live AEM insights/news fragment (see dynamic_pages.news.source), with a short-lived cache."""
+    url = source_cfg.get("url")
+    if not url:
+        return None
+
+    cached = _live_fetch_cache.get(url)
+    if cached and (time.time() - cached[0]) < _LIVE_FETCH_CACHE_TTL:
+        return cached[1]
+
+    try:
+        from bs4 import BeautifulSoup
+
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        base_url = source_cfg.get("base_url", "")
+        articles = []
+        for link in soup.select(source_cfg.get("item_selector", "a")):
+            title_el = link.select_one(source_cfg.get("title_selector", ""))
+            if not title_el:
+                continue
+            date_el = link.select_one(source_cfg.get("date_selector", ""))
+            href = link.get("href", "")
+            articles.append({
+                "title": title_el.get_text(strip=True),
+                "date": date_el.get_text(strip=True) if date_el else "",
+                "url": href if href.startswith("http") else f"{base_url}{href}",
+            })
+        if articles:
+            _live_fetch_cache[url] = (time.time(), articles)
+        return articles or None
+    except Exception as e:
+        print(f"AEM news fetch failed for {url}: {e}")
+        return None
+
+
+def _fetch_live_news(site_id: str) -> Optional[List[Dict[str, Any]]]:
+    """Fetch live news/insights using the source configured for this site (see dynamic_pages.news.source)."""
+    try:
+        config = load_site_config(site_id)
+    except Exception:
+        return None
+
+    source = config.get("dynamic_pages", {}).get("news", {}).get("source", {})
+    if source.get("type") == "aem_fragment":
+        return _fetch_aem_articles(source)
+    return None
+
+
 # Tool-calling implementations
-def get_open_positions(site_id: str = "kkr") -> List[Dict[str, Any]]:
+def get_open_positions(site_id: str = "kkr", message: str = "") -> List[Dict[str, Any]]:
     """
-    Fetch open positions from careers page (mock implementation).
+    Fetch live open positions using the site's configured ATS (see dynamic_pages.careers.ats).
 
-    In production, this would scrape dynamically from the site.
+    Results are narrowed by any mentioned location (keyword/alias match), then semantically
+    re-ranked against the full message so free-text role queries surface the most relevant jobs first.
 
     Args:
         site_id: The site identifier (kkr, ness, etc.)
+        message: Original user message, used to filter/rank results
 
     Returns:
-        List of job listings
+        List of job listings (empty if no ATS is configured or the live fetch fails)
     """
-    # Mock data - return site-specific jobs
-    if site_id == "kkr":
-        return [
-            {
-                "title": "Investment Associate",
-                "location": "New York, NY",
-                "department": "Private Equity",
-                "url": "https://www.kkr.com/careers/investment-associate",
-            },
-            {
-                "title": "Software Engineer",
-                "location": "San Francisco, CA",
-                "department": "Technology",
-                "url": "https://www.kkr.com/careers/software-engineer",
-            },
-            {
-                "title": "Analyst",
-                "location": "London, UK",
-                "department": "Credit",
-                "url": "https://www.kkr.com/careers/analyst",
-            },
-        ]
-    else:  # Default to ness or other sites
-        return [
-            {
-                "title": "Senior Software Engineer",
-                "location": "Remote",
-                "department": "Engineering",
-                "url": "https://www.ness.com/careers/senior-engineer",
-            },
-            {
-                "title": "Solutions Architect",
-                "location": "New York, NY",
-                "department": "Services",
-                "url": "https://www.ness.com/careers/architect",
-            },
-            {
-                "title": "Product Manager",
-                "location": "San Francisco, CA",
-                "department": "Product",
-                "url": "https://www.ness.com/careers/product-manager",
-            },
-        ]
+    positions = _fetch_live_positions(site_id) or []
+    positions = _filter_by_location(positions, message)
+    positions = _semantic_rank_positions(positions, message, cache_key=f"{site_id}:positions")
+    return positions
 
 
-def get_latest_news(site_id: str = "kkr") -> List[Dict[str, Any]]:
+def get_latest_news(site_id: str = "kkr", message: str = "") -> List[Dict[str, Any]]:
     """
-    Fetch latest news/articles from insights page (mock implementation).
-
-    In production, this would scrape dynamically from the site.
+    Fetch live news/articles using the site's configured news source (see dynamic_pages.news.source).
 
     Args:
         site_id: The site identifier (kkr, ness, etc.)
+        message: Original user message (unused for news, kept for a consistent tool signature)
 
     Returns:
-        List of news articles
+        List of news articles (empty if no source is configured or the live fetch fails)
     """
-    # Mock data - return site-specific insights
-    if site_id == "kkr":
-        return [
-            {
-                "title": "The Future of Private Markets",
-                "date": "2024-09-18",
-                "excerpt": "Exploring emerging opportunities in private equity and credit markets...",
-                "url": "https://www.kkr.com/insights/future-private-markets",
-            },
-            {
-                "title": "ESG and Value Creation",
-                "date": "2024-09-15",
-                "excerpt": "How ESG considerations drive sustainable returns in portfolio companies...",
-                "url": "https://www.kkr.com/insights/esg-value-creation",
-            },
-        ]
-    else:  # Default to ness or other sites
-        return [
-            {
-                "title": "Digital Transformation Trends 2024",
-                "date": "2024-09-15",
-                "excerpt": "Exploring the latest trends in digital transformation...",
-                "url": "https://www.ness.com/insights/digital-transformation-2024",
-            },
-            {
-                "title": "Cloud Migration Best Practices",
-                "date": "2024-09-10",
-                "excerpt": "Key strategies for successful cloud migration projects...",
-                "url": "https://www.ness.com/insights/cloud-migration-best-practices",
-            },
-        ]
+    return _fetch_live_news(site_id) or []
 
 
 # Registry of available tools

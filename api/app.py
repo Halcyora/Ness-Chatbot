@@ -10,7 +10,7 @@ Exposes:
 import os
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, Header, Body
+from fastapi import FastAPI, HTTPException, Header, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -19,6 +19,7 @@ from api.orchestrator import handle_message
 from api.config_loader import load_site_config
 from api.cache import clear_all_cache
 from api.session_memory import clear_session
+from api.rate_limiter import check_rate_limit
 from api.admin_pages import (
     list_candidates,
     set_page_status,
@@ -97,13 +98,22 @@ async def start_session(request: StartSessionRequest) -> Dict[str, Any]:
 
 
 @app.post("/message")
-async def send_message(request: MessageRequest) -> Dict[str, Any]:
+async def send_message(request: MessageRequest, http_request: Request) -> Dict[str, Any]:
     """
     Send a user message and get a response.
 
     Handles the full orchestration pipeline. Passing the same session_id across
     calls lets the bot resolve follow-up questions using recent conversation turns.
     """
+    client_id = http_request.client.host if http_request.client else "unknown"
+    allowed, reason, retry_after = check_rate_limit(client_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=reason,
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
         response = handle_message(request.site_id, request.message, session_id=request.session_id)
         return response

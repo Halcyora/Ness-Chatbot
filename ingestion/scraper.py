@@ -94,15 +94,23 @@ def extract_text(html: str) -> str:
     for script in soup(["script", "style"]):
         script.decompose()
 
-    # Get text
-    text = soup.get_text()
+    # Get text with a per-tag separator so blank lines mark block/paragraph boundaries;
+    # downstream chunking relies on these boundaries to split on semantic units, not raw word counts.
+    text = soup.get_text(separator="\n")
 
-    # Break into lines and remove leading/trailing space
-    lines = (line.strip() for line in text.splitlines())
-    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    text = " ".join(chunk for chunk in chunks if chunk)
+    paragraphs = []
+    current_lines: list = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            current_lines.append(line)
+        elif current_lines:
+            paragraphs.append(" ".join(current_lines))
+            current_lines = []
+    if current_lines:
+        paragraphs.append(" ".join(current_lines))
 
-    return text.strip()
+    return "\n\n".join(paragraphs).strip()
 
 
 def extract_title(html: str) -> str:
